@@ -47,6 +47,7 @@ esp_err_t myspi_prepare_circular_buffer(
     , const double              dmaClockSpeedInHz
     , const gpio_num_t          mosi_gpio_num
     , const gpio_num_t          sck_gpio_num
+    , const gpio_num_t          cs_gpio_num
     , const int                 waitCycle
 ) {
     const bool spi_periph_claimed = spicommon_periph_claim(spiHostDevice);
@@ -74,6 +75,11 @@ esp_err_t myspi_prepare_circular_buffer(
     gpio_set_direction(sck_gpio_num, GPIO_MODE_INPUT_OUTPUT);
     gpio_matrix_out(sck_gpio_num, HSPICLK_OUT_IDX, false, false);
     gpio_matrix_in(sck_gpio_num, HSPICLK_IN_IDX, false);
+
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[cs_gpio_num], PIN_FUNC_GPIO);
+    gpio_set_direction(cs_gpio_num, GPIO_MODE_INPUT_OUTPUT);
+    gpio_matrix_out(cs_gpio_num, HSPICS0_OUT_IDX, false, false);
+    gpio_matrix_in(cs_gpio_num, HSPICS0_IN_IDX, false);
 
     //Select DMA channel.
     DPORT_SET_PERI_REG_BITS(
@@ -170,9 +176,9 @@ esp_err_t myspi_prepare_circular_buffer(
     spiHw->user.cs_hold                = 0;
 
     //Configure CS pin
-    spiHw->pin.cs0_dis                 = (Cs == 0) ? 0 : 1;
-    spiHw->pin.cs1_dis                 = (Cs == 1) ? 0 : 1;
-    spiHw->pin.cs2_dis                 = (Cs == 2) ? 0 : 1;
+    //spiHw->pin.cs0_dis                 = (Cs == 0) ? 0 : 1;
+    //spiHw->pin.cs1_dis                 = (Cs == 1) ? 0 : 1;
+    //spiHw->pin.cs2_dis                 = (Cs == 2) ? 0 : 1;
 
     //Reset SPI peripheral
     spiHw->dma_conf.val                |= SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST;
@@ -203,21 +209,31 @@ esp_err_t myspi_prepare_circular_buffer(
 
     spiHw->user.usr_mosi_highpart      = 0;
     spiHw->user2.usr_command_value     = 0;
-    spiHw->addr                        = 0;
     spiHw->user.usr_mosi               = 1;        // Enable MOSI
     spiHw->user.usr_miso               = 0;
+
+    spiHw->user.sio = 1;
+
+    spiHw->addr                        = 0x01abcdef;    //Address test. Will send MSB first if SPI_WR_BIT_ORDER = 0.
+    spiHw->user.usr_addr = 1;
+    spiHw->user1.usr_addr_bitlen = 16-1;
+    spiHw->pin.cs0_dis = 0;
+
+    spiHw->user.cs_hold = 1;
+    spiHw->ctrl2.hold_time = 10;
+    //spiHw->pin.cs_keep_active = 1;
 
 
     spiHw->dma_out_link.addr           = (int)(lldescs) & 0xFFFFF;
 
-	spiHw->mosi_dlen.usr_mosi_dbitlen  = 0;		// works great! (there's no glitch in 5 hours)
+	spiHw->mosi_dlen.usr_mosi_dbitlen  = 16-1;		// works great! (there's no glitch in 5 hours)
     spiHw->miso_dlen.usr_miso_dbitlen  = 0;
 
     // Set circular mode
     //      https://www.esp32.com/viewtopic.php?f=2&t=4011#p18107
     //      > yes, in SPI DMA mode, SPI will alway transmit and receive
     //      > data when you set the SPI_DMA_CONTINUE(BIT16) of SPI_DMA_CONF_REG.
-    spiHw->dma_conf.dma_continue       = 1;
+    //spiHw->dma_conf.dma_continue       = 1;
 
     return ESP_OK;
 }

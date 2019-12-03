@@ -23,6 +23,7 @@ esp_err_t myspi_prepare_circular_buffer(
     , double                clock_speed_hz      // SPI speed in Hz
     , gpio_num_t            mosi_gpio_num       // GPIO
     , gpio_num_t            sck_gpio_num
+    , gpio_num_t            cs_gpio_num
     , int                   wait_cycle          // Number of wait cycle before actual transmission (1 cycle means SPI DMA's single cycle)
 );
 

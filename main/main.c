@@ -27,7 +27,8 @@ struct {
     spi_host_device_t	host;			// HSPI_HOST or VSPI_HOST
     int					dmaChan;		// 0, 1 or 2
     gpio_num_t			mosiGpioNum;	// GPIO MOSI
-    gpio_num_t			sckGpioNum;	// GPIO SCK
+    gpio_num_t			sckGpioNum;	    // GPIO SCK
+    gpio_num_t			csGpioNum;	    // GPIO SCK
     spi_dev_t*			hw;
     lldesc_t *descs;
 } spi;
@@ -43,8 +44,9 @@ void app_main()
     spi.dmaChan			= 1;
     spi.mosiGpioNum		= PIN_NUM_MOSI;
     spi.sckGpioNum      = PIN_NUM_CLK;
+    spi.csGpioNum       = PIN_NUM_CS;
     spi.hw				= myspi_get_hw_for_host(HSPI_HOST);
-    spi.descs = (lldesc_t *)calloc(1, sizeof(lldesc_t));
+    spi.descs = (lldesc_t *)calloc(2, sizeof(lldesc_t));
 
 
     const double SpiDmaClockSpeedInHz = 1000000;    //8Mhz
@@ -56,25 +58,34 @@ void app_main()
     ESP_LOGI(__func__, "Allocating tx buffer with %d bytes", len_bytes);
     spi_tx_buf = (uint32_t *)heap_caps_malloc(len_bytes, MALLOC_CAP_DMA);       	//For DMA
 
-    //spi_tx_buf[0] = 0xaa;
+    spi_tx_buf[0] = 0x44332211;
+    spi_tx_buf[1] = 0x88776655;
     //spi_tx_buf[1] = 0x43;
-
+    /*
     uint8_t cnt = 1;
     for (size_t i = 0; i < len_word; i++)
     {
         spi_tx_buf[i] = cnt;
         ESP_LOGI(__func__, "buf:%d", spi_tx_buf[i]);
         cnt++;
-    }
+    }*/
     
+    //lldesc_t *dd = &spi.descs[0];
 
     //Configure DMA link
-    spi.descs->owner = 1;
-    spi.descs->eof = 1;
-    spi.descs->length = len_bytes;
-    spi.descs->size = len_bytes;
-    spi.descs->qe.stqe_next    = &spi.descs[0];
-    spi.descs->buf = spi_tx_buf;
+    spi.descs[0].owner = 1;
+    spi.descs[0].eof = 0;
+    spi.descs[0].length = 2;
+    spi.descs[0].size = 4;
+    spi.descs[0].qe.stqe_next    = &spi.descs[1];
+    spi.descs[0].buf = spi_tx_buf;
+
+    spi.descs[1].owner = 1;
+    spi.descs[1].eof = 0;
+    spi.descs[1].length = 2;
+    spi.descs[1].size = 4;
+    spi.descs[1].qe.stqe_next    = &spi.descs[0];
+    spi.descs[1].buf = spi_tx_buf+1;
 
 
     myspi_prepare_circular_buffer(
@@ -84,6 +95,7 @@ void app_main()
         , SpiDmaClockSpeedInHz
         , spi.mosiGpioNum
         , spi.sckGpioNum
+        , spi.csGpioNum
         , SpiHSyncBackporchWaitCycle
     );
 
@@ -92,7 +104,7 @@ void app_main()
     spi.hw->dma_conf.dma_tx_stop		= 1;	// Stop SPI DMA
     spi.hw->ctrl2.val           		= 0;	// Reset timing
     spi.hw->dma_conf.dma_tx_stop		= 0;	// Disable stop
-    spi.hw->dma_conf.dma_continue	= 1;	// Set contiguous mode
+    //spi.hw->dma_conf.dma_continue	= 1;	// Set contiguous mode
     spi.hw->dma_out_link.start		= 1;	// Start SPI DMA transfer (1)
 
 
@@ -102,6 +114,7 @@ void app_main()
 
     while(1)
     {
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+        vTaskDelay(1 / portTICK_PERIOD_MS);
+        spi.hw->cmd.usr					= 1;	// SPI: Start SPI DMA transfer
     }
 }
