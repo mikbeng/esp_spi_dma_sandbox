@@ -60,31 +60,22 @@ void app_main()
 
     spi_tx_buf[0] = 0x44332211;
     spi_tx_buf[1] = 0x88776655;
-    //spi_tx_buf[1] = 0x43;
-    /*
-    uint8_t cnt = 1;
-    for (size_t i = 0; i < len_word; i++)
-    {
-        spi_tx_buf[i] = cnt;
-        ESP_LOGI(__func__, "buf:%d", spi_tx_buf[i]);
-        cnt++;
-    }*/
-    
-    //lldesc_t *dd = &spi.descs[0];
+
 
     //Configure DMA link
     spi.descs[0].owner = 1;
     spi.descs[0].eof = 0;
-    spi.descs[0].length = 2;
+    spi.descs[0].length = 4;
     spi.descs[0].size = 4;
-    spi.descs[0].qe.stqe_next    = &spi.descs[1];
+    spi.descs[0].qe.stqe_next = spi.descs+1;
     spi.descs[0].buf = spi_tx_buf;
 
+
     spi.descs[1].owner = 1;
-    spi.descs[1].eof = 0;
-    spi.descs[1].length = 2;
+    spi.descs[1].eof = 1;
+    spi.descs[1].length = 4;
     spi.descs[1].size = 4;
-    spi.descs[1].qe.stqe_next    = &spi.descs[0];
+    spi.descs[1].qe.stqe_next    = spi.descs;
     spi.descs[1].buf = spi_tx_buf+1;
 
 
@@ -115,6 +106,7 @@ void app_main()
     while(1)
     {
         vTaskDelay(1 / portTICK_PERIOD_MS);
+        spi.hw->dma_out_link.start		= 1;	// Start SPI DMA transfer (1)
         spi.hw->cmd.usr					= 1;	// SPI: Start SPI DMA transfer
     }
 }
