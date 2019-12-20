@@ -16,24 +16,24 @@ extern "C" {
 #define MY_ESP_ERR_SPI_HOST_ALREADY_IN_USE      MY_ESP_ERR_SPI(4)
 #define MY_ESP_ERR_SPI_DMA_ALREADY_IN_USE       MY_ESP_ERR_SPI(5)
 
-esp_err_t myspi_prepare_circular_buffer(
-      spi_host_device_t     host                // HSPI_HOST or VSPI_HOST
-    , int                   dma_chan            //
-    , const lldesc_t*       lldesc              // lldesc_t which makes circular buffer
-    , double                clock_speed_hz      // SPI speed in Hz
-    , gpio_num_t            mosi_gpio_num       // GPIO
-    , gpio_num_t            sck_gpio_num
-    , gpio_num_t            cs_gpio_num
-    , int                   wait_cycle          // Number of wait cycle before actual transmission (1 cycle means SPI DMA's single cycle)
-);
+#define PIN_NUM_MOSI 5
+#define PIN_NUM_CLK  18
+#define PIN_NUM_CS   27
 
-esp_err_t myspi_release_circular_buffer(
-      const spi_host_device_t   host
-    , const int                 dma_chan
-    , const gpio_num_t          mosi_gpio_num
-);
+typedef struct
+{
+    spi_host_device_t	host;			// HSPI_HOST or VSPI_HOST
+    int					dmaChan;		// 0, 1 or 2
+    gpio_num_t			mosiGpioNum;	// GPIO MOSI
+    gpio_num_t			sckGpioNum;	    // GPIO SCK
+    gpio_num_t			csGpioNum;	    // GPIO CS
+    double              spi_clk         //SPI clock speed in Hz
+}my_spi_config_t;
 
-spi_dev_t *myspi_get_hw_for_host(spi_host_device_t host);
+
+esp_err_t myspi_init(my_spi_config_t *my_spi_config);
+esp_err_t myspi_deinit(my_spi_config_t *my_spi_config);
+esp_err_t myspi_start_tx_transfers(void);
 
 #ifdef __cplusplus
 } // extern "C"
