@@ -192,8 +192,8 @@ esp_err_t myspi_prepare_circular_buffer(
     spiHw->user.val		&= ~(SPI_FWRITE_DUAL|SPI_FWRITE_QUAD|SPI_FWRITE_DIO|SPI_FWRITE_QIO);
 
     //DMA temporary workaround: let RX DMA work somehow to avoid the issue in ESP32 v0/v1 silicon
-    spiHw->dma_in_link.addr            = 0;
-    spiHw->dma_in_link.start           = 1;
+    spiHw->dma_in_link.addr            = 0;//(int)(lldescs) & 0xFFFFF;
+    spiHw->dma_in_link.start           = 0;
 
     spiHw->user1.usr_addr_bitlen       = 0;
     spiHw->user2.usr_command_bitlen    = 0;
@@ -227,7 +227,7 @@ esp_err_t myspi_prepare_circular_buffer(
     spiHw->dma_out_link.addr           = (int)(lldescs) & 0xFFFFF;
 
 	spiHw->mosi_dlen.usr_mosi_dbitlen  = 16-1;		// works great! (there's no glitch in 5 hours)
-    spiHw->miso_dlen.usr_miso_dbitlen  = 0;
+    spiHw->miso_dlen.usr_miso_dbitlen  = 0;//16-1;
 
     // Set circular mode
     //      https://www.esp32.com/viewtopic.php?f=2&t=4011#p18107
