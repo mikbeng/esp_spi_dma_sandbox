@@ -1,3 +1,6 @@
+/* ========================================================================= */
+/* [INCL] Includes                                                           */
+/* ========================================================================= */
 #include <soc/spi_reg.h>
 #include <soc/dport_reg.h>
 #include "my_spi.h"
@@ -5,7 +8,17 @@
 #include <soc/dport_reg.h>
 #include "soc/spi_struct.h"
 
-static const uint8_t InvalidIndex = (uint8_t) -1;
+
+/* ========================================================================= */
+/* [DEFS] Defines                                                            */
+/* ========================================================================= */
+#define in_suc_eof_int_en BIT(5)
+#define out_eof_int_en BIT(7)
+#define spi_trans_done_int BIT(4)
+
+/* ========================================================================= */
+/* [TYPE] Type definitions                                                   */
+/* ========================================================================= */
 
 typedef struct {
     spi_host_device_t	host;			// HSPI_HOST or VSPI_HOST
@@ -21,15 +34,22 @@ typedef struct {
     int                 dummy_cycle;
 } spi_internal_t;
 
-#define in_suc_eof_int_en BIT(5)
-#define out_eof_int_en BIT(7)
-#define spi_trans_done_int BIT(4)
+/* ========================================================================= */
+/* [PFDE] Private functions declaration                                      */
+/* ========================================================================= */
 
+/* ========================================================================= */
+/* [GLOB] Global variables                                                   */
+/* ========================================================================= */
 spi_internal_t spi_internal;
 int level = 0;
+	
+/* ========================================================================= */
+/* [PFUN] Private functions implementations                                  */
+/* ========================================================================= */
 
 // This is run in interrupt context.
-void spi_intr_dma(void)
+static void IRAM_ATTR s_spi_intr_dma(void)
 {
     uint32_t spi_intr_status;
     uint32_t spi_intr_raw;
@@ -38,11 +58,10 @@ void spi_intr_dma(void)
 
     spi_intr_status = spi_internal.hw->dma_int_st.val; //Read interrupt status
 
-    //spi_intr_status = spi.hw->slave.trans_done; //Read interrupt status
-
     //ets_printf("INT! spi_intr_status:%d\n", spi_intr_status);
     //ets_printf("INT! spi_intr_raw:%d\n", spi_intr_raw);
     
+    //GPIO debug pin
     gpio_set_level(GPIO_NUM_23, level);
     level ^= 1;
 
@@ -59,32 +78,30 @@ void spi_intr_dma(void)
 }
 
 // This is run in interrupt context.
-void spi_intr(void)
+static void IRAM_ATTR s_spi_intr(void)
 {
+    //Temporarily disable interrupt 
     esp_intr_disable(spi_internal.intr);
     uint32_t spi_intr_slave_val;
 
     spi_intr_slave_val = spi_internal.hw->slave.val; //Read interrupt status
 
-    //spi_intr_status = spi.hw->slave.trans_done; //Read interrupt status
-
     //ets_printf("INT! spi_intr_slave_val:%d\n", spi_intr_slave_val);
     //ets_printf("INT! spi_intr_raw:%d\n", spi_intr_raw);
     
+    //GPIO debug pin
     gpio_set_level(GPIO_NUM_23, level);
     level ^= 1;
 
     if (spi_intr_slave_val & spi_trans_done_int) { //Check for interrupt on rising edge on CAP0 signal
 
-        //ets_printf("INT! spi_intr_status:%d\n", spi_intr_status);
-        //ets_printf("INT! spi_intr_raw:%d\n", spi_intr_raw);
-        //spi.hw->dma_in_link.start   	= 0;
         spi_internal.hw->dma_out_link.start		= 1;	// Start SPI DMA transfer (1)
         spi_internal.hw->cmd.usr					= 1;	// SPI: Start SPI DMA transfer
 
         spi_internal.hw->slave.trans_done = 0;     //Clears the interrupt
     }
     
+    //Finally, enable the interrupt
     esp_intr_enable(spi_internal.intr);
 }
 
@@ -100,26 +117,26 @@ static spi_dev_t *myspi_get_hw_for_host(
 }
 
 
-static uint8_t getSpidOutByHost(
+static esp_err_t getSpidOutByHost(
     spi_host_device_t host
 ) {
     switch(host) {
     case SPI_HOST:  return SPID_OUT_IDX;	break;
     case HSPI_HOST: return HSPID_OUT_IDX;	break;
     case VSPI_HOST: return VSPID_OUT_IDX;	break;
-    default:        return InvalidIndex;	break;
+    default:        return ESP_FAIL;	break;
     }
 }
 
 
-static uint8_t getSpidInByHost(
+static esp_err_t getSpidInByHost(
     spi_host_device_t host
 ) {
     switch(host) {
     case SPI_HOST:  return SPID_IN_IDX;		break;
     case HSPI_HOST: return HSPID_IN_IDX;	break;
     case VSPI_HOST: return VSPID_IN_IDX;	break;
-    default:        return InvalidIndex;	break;
+    default:        return ESP_FAIL;	break;
     }
 }
 
@@ -130,8 +147,8 @@ static esp_err_t s_myspi_register_interrupt(spi_internal_t *spi)
     //DMA interrupt
     /*
     spi.hw->dma_int_ena.out_eof = 1;
-    int flags = 0;
-    ret = esp_intr_alloc(ETS_SPI2_DMA_INTR_SOURCE, flags, &spi_intr_dma, NULL, &spi.intr_dma);
+    int flags = ESP_INTR_FLAG_IRAM;
+    ret = esp_intr_alloc(ETS_SPI2_DMA_INTR_SOURCE, flags, &s_spi_intr_dma, NULL, &spi.intr_dma);
     if (ret != ESP_OK) {
         ESP_LOGE(__func__, "esp_intr_alloc() returned %d", ret);
     }
@@ -142,11 +159,14 @@ static esp_err_t s_myspi_register_interrupt(spi_internal_t *spi)
 
     //SPI interrupt
     spi->hw->slave.trans_inten = 1;
-    int flags = 0;
-    ret = esp_intr_alloc(ETS_SPI2_INTR_SOURCE, flags, &spi_intr, NULL, &spi->intr);
+    int flags = ESP_INTR_FLAG_IRAM;
+    ret = esp_intr_alloc(ETS_SPI2_INTR_SOURCE, flags, &s_spi_intr, NULL, &spi->intr);
     if (ret != ESP_OK) {
         ESP_LOGE(__func__, "esp_intr_alloc() returned %d", ret);
+        return ESP_FAIL;
     }
+    int int_cpu = esp_intr_get_cpu(spi->intr);
+    ESP_LOGI(__func__, "Allocated interrupt ETS_SPI2_INTR_SOURCE on cpu %d", int_cpu);
 
     return ESP_OK;
 }
@@ -170,7 +190,7 @@ static esp_err_t s_myspi_configure_registers(spi_internal_t *spi)
     gpio_matrix_out(spi->csGpioNum, HSPICS0_OUT_IDX, false, false);
     gpio_matrix_in(spi->csGpioNum, HSPICS0_IN_IDX, false);
 
-    //Select DMA channel.
+    //Select DMA channel.1
     DPORT_SET_PERI_REG_BITS(
           DPORT_SPI_DMA_CHAN_SEL_REG
         , 3
@@ -376,7 +396,9 @@ esp_err_t myspi_init(my_spi_config_t *my_spi_config)
     ret = s_myspi_configure_registers(&spi_internal);
     if (ret != ESP_OK) {
         ESP_LOGE(__func__, "s_myspi_configure_registers() returned %d", ret);
+        return ESP_FAIL;
     }
+    ESP_LOGI(__func__, "SPI registers configured!");
 
 
     s_myspi_register_interrupt(&spi_internal);

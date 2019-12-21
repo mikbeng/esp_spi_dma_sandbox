@@ -4,6 +4,7 @@
 #include <driver/spi_common.h>
 #include <driver/spi_master.h>
 #include "my_config.h"
+#include "esp_err.h"
 
 #ifdef __cplusplus
 extern "C" {

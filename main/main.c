@@ -16,7 +16,7 @@
 #include <soc/spi_reg.h>
 #include <driver/spi_common.h>
 #include <driver/spi_master.h>
-#include "my_spi.h"
+#include "my_spi.h"k
 
 void app_main()
 {
@@ -36,7 +36,7 @@ void app_main()
     my_spi_config.mosiGpioNum	= PIN_NUM_MOSI;
     my_spi_config.sckGpioNum    = PIN_NUM_CLK;
     my_spi_config.csGpioNum     = PIN_NUM_CS;
-    my_spi_config.spi_clk       = 8000000;  //8Mhz
+    my_spi_config.spi_clk       = 1000000;  //8Mhz
     
     myspi_init(&my_spi_config);
 
