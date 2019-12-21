@@ -40,6 +40,18 @@ void app_main()
     
     myspi_init(&my_spi_config);
 
+    //Set up tx buffer
+    uint32_t *spi_tx_buf;
+    uint16_t len_word = 10;
+    uint16_t len_bytes = sizeof(uint32_t) * len_word;
+
+    ESP_LOGI(__func__, "Allocating tx buffer with %d bytes", len_bytes);
+    spi_tx_buf = (uint32_t *)heap_caps_malloc(len_bytes, MALLOC_CAP_DMA);       	//For DMA
+
+    *spi_tx_buf = 0x44332211;
+    *(spi_tx_buf+1) = 0x88776655;
+
+    myspi_DMA_init(my_spi_config.host, my_spi_config.dmaChan, (void *)spi_tx_buf);
 
     //prep command word
     uint8_t TLE5012B_cmd_RW = 0;		//Write operation

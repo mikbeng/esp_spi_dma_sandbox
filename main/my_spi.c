@@ -171,54 +171,8 @@ static esp_err_t s_myspi_register_interrupt(spi_internal_t *spi)
     return ESP_OK;
 }
 
-
-static esp_err_t s_myspi_configure_registers(spi_internal_t *spi) 
+static esp_err_t s_myspi_configure_clock(spi_internal_t *spi)
 {
-    //Configure GPIOs
-    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[spi->mosiGpioNum], PIN_FUNC_GPIO);
-    gpio_set_direction(spi->mosiGpioNum, GPIO_MODE_INPUT_OUTPUT);
-    gpio_matrix_out(spi->mosiGpioNum, getSpidOutByHost(spi->host), false, false);
-    gpio_matrix_in(spi->mosiGpioNum, getSpidInByHost(spi->host), false);
-
-    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[spi->sckGpioNum], PIN_FUNC_GPIO);
-    gpio_set_direction(spi->sckGpioNum, GPIO_MODE_INPUT_OUTPUT);
-    gpio_matrix_out(spi->sckGpioNum, HSPICLK_OUT_IDX, false, false);
-    gpio_matrix_in(spi->sckGpioNum, HSPICLK_IN_IDX, false);
-
-    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[spi->csGpioNum], PIN_FUNC_GPIO);
-    gpio_set_direction(spi->csGpioNum, GPIO_MODE_INPUT_OUTPUT);
-    gpio_matrix_out(spi->csGpioNum, HSPICS0_OUT_IDX, false, false);
-    gpio_matrix_in(spi->csGpioNum, HSPICS0_IN_IDX, false);
-
-    //Select DMA channel.1
-    DPORT_SET_PERI_REG_BITS(
-          DPORT_SPI_DMA_CHAN_SEL_REG
-        , 3
-        , spi->dmaChan
-        , (spi->host * 2)
-    );
-
-    //Reset DMA
-    spi->hw->dma_conf.val        		|= SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST;
-    spi->hw->dma_out_link.start  		= 0;
-    spi->hw->dma_in_link.start   		= 0;
-    spi->hw->dma_conf.val        		&= ~(SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST);
-
-    //Reset timing
-    spi->hw->ctrl2.val           		= 0;
-
-    //Disable unneeded ints
-    spi->hw->slave.rd_buf_done   		= 0;
-    spi->hw->slave.wr_buf_done   		= 0;
-    spi->hw->slave.rd_sta_done   		= 0;
-    spi->hw->slave.wr_sta_done   		= 0;
-    spi->hw->slave.rd_buf_inten  		= 0;
-    spi->hw->slave.wr_buf_inten  		= 0;
-    spi->hw->slave.rd_sta_inten  		= 0;
-    spi->hw->slave.wr_sta_inten  		= 0;
-    spi->hw->slave.trans_inten   		= 0;
-    spi->hw->slave.trans_done    		= 0;
-
 	// Set SPI Clock
 	//  Register 7.7: SPI_CLOCK_REG (0x18)
 	//
@@ -241,22 +195,74 @@ static esp_err_t s_myspi_configure_registers(spi_internal_t *spi)
 	//
 	//		SPI_CLKCNT_L
 	//			In master mode, this must be equal to SPI_CLKCNT_N.
-	{
-		const double	preDivider			= 2.0;
-	    const double	apbClockSpeedInHz	= APB_CLK_FREQ;
-		const double	apbClockPerDmaCycle	= (apbClockSpeedInHz / preDivider / spi->clk_speed);
 
-		const int32_t	clkdiv_pre	= ((int32_t) preDivider) - 1;
-		const int32_t	clkcnt_n	= ((int32_t) apbClockPerDmaCycle) - 1;
-		const int32_t	clkcnt_h	= (clkcnt_n + 1) / 2 - 1;
-		const int32_t	clkcnt_l	= clkcnt_n;
+    const double	preDivider			= 2.0;
+    const double	apbClockSpeedInHz	= APB_CLK_FREQ;
+    const double	apbClockPerDmaCycle	= (apbClockSpeedInHz / preDivider / spi->clk_speed);
 
-		spi->hw->clock.clk_equ_sysclk	= 0;
-	    spi->hw->clock.clkcnt_n		= clkcnt_n;
-	    spi->hw->clock.clkdiv_pre		= clkdiv_pre;
-		spi->hw->clock.clkcnt_h		= clkcnt_h;
-	    spi->hw->clock.clkcnt_l		= clkcnt_l;
-	}
+    const int32_t	clkdiv_pre	= ((int32_t) preDivider) - 1;
+    const int32_t	clkcnt_n	= ((int32_t) apbClockPerDmaCycle) - 1;
+    const int32_t	clkcnt_h	= (clkcnt_n + 1) / 2 - 1;
+    const int32_t	clkcnt_l	= clkcnt_n;
+
+    spi->hw->clock.clk_equ_sysclk	= 0;
+    spi->hw->clock.clkcnt_n		    = clkcnt_n;
+    spi->hw->clock.clkdiv_pre		= clkdiv_pre;
+    spi->hw->clock.clkcnt_h		    = clkcnt_h;
+    spi->hw->clock.clkcnt_l		    = clkcnt_l;
+
+    return ESP_OK;
+}
+
+static esp_err_t s_myspi_configure_GPIO(spi_internal_t *spi)
+{
+    //Configure GPIOs for 3-wire half duplex (MOSI,SCK and CS)
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[spi->mosiGpioNum], PIN_FUNC_GPIO);
+    gpio_set_direction(spi->mosiGpioNum, GPIO_MODE_INPUT_OUTPUT);
+    gpio_matrix_out(spi->mosiGpioNum, getSpidOutByHost(spi->host), false, false);
+    gpio_matrix_in(spi->mosiGpioNum, getSpidInByHost(spi->host), false);
+
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[spi->sckGpioNum], PIN_FUNC_GPIO);
+    gpio_set_direction(spi->sckGpioNum, GPIO_MODE_INPUT_OUTPUT);
+    gpio_matrix_out(spi->sckGpioNum, HSPICLK_OUT_IDX, false, false);
+    gpio_matrix_in(spi->sckGpioNum, HSPICLK_IN_IDX, false);
+
+    PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[spi->csGpioNum], PIN_FUNC_GPIO);
+    gpio_set_direction(spi->csGpioNum, GPIO_MODE_INPUT_OUTPUT);
+    gpio_matrix_out(spi->csGpioNum, HSPICS0_OUT_IDX, false, false);
+    gpio_matrix_in(spi->csGpioNum, HSPICS0_IN_IDX, false);
+
+    return ESP_OK;
+}
+
+static esp_err_t s_myspi_configure_registers(spi_internal_t *spi) 
+{
+
+    //Claim peripheral
+    const bool spi_periph_claimed = spicommon_periph_claim(spi->host);
+    if(! spi_periph_claimed) {
+        return MY_ESP_ERR_SPI_HOST_ALREADY_IN_USE;
+    }
+
+    s_myspi_configure_GPIO(spi);
+
+    //Reset timing
+    spi->hw->ctrl2.val           		= 0;
+
+    //Disable unneeded ints
+    spi->hw->slave.rd_buf_done   		= 0;
+    spi->hw->slave.wr_buf_done   		= 0;
+    spi->hw->slave.rd_sta_done   		= 0;
+    spi->hw->slave.wr_sta_done   		= 0;
+    spi->hw->slave.rd_buf_inten  		= 0;
+    spi->hw->slave.wr_buf_inten  		= 0;
+    spi->hw->slave.rd_sta_inten  		= 0;
+    spi->hw->slave.wr_sta_inten  		= 0;
+    spi->hw->slave.trans_inten   		= 0;
+    spi->hw->slave.trans_done    		= 0;
+
+    //Configure clock
+    s_myspi_configure_clock(spi);
 
     //Configure bit order
     spi->hw->ctrl.rd_bit_order           = 0;    // MSB first
@@ -271,19 +277,9 @@ static esp_err_t s_myspi_configure_registers(spi_internal_t *spi)
     spi->hw->user.usr_dummy              = 0;
     spi->hw->user1.usr_dummy_cyclelen    = 0;
 
-    //Reset SPI peripheral
-    spi->hw->dma_conf.val                |= SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST;
-    spi->hw->dma_out_link.start          = 0;
-    spi->hw->dma_in_link.start           = 0;
-    spi->hw->dma_conf.val                &= ~(SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST);
-
     //Set up QIO/DIO if needed
     spi->hw->ctrl.val		&= ~(SPI_FREAD_DUAL|SPI_FREAD_QUAD|SPI_FREAD_DIO|SPI_FREAD_QIO);
     spi->hw->user.val		&= ~(SPI_FWRITE_DUAL|SPI_FWRITE_QUAD|SPI_FWRITE_DIO|SPI_FWRITE_QIO);
-
-    //DMA temporary workaround: let RX DMA work somehow to avoid the issue in ESP32 v0/v1 silicon
-    spi->hw->dma_in_link.addr            = 0;//(int)(lldescs) & 0xFFFFF;
-    spi->hw->dma_in_link.start           = 0;
 
     spi->hw->user1.usr_addr_bitlen       = 0;
     spi->hw->user2.usr_command_bitlen    = 0;
@@ -324,9 +320,59 @@ static esp_err_t s_myspi_configure_registers(spi_internal_t *spi)
     spi->hw->user.cs_setup               = 0;
     spi->hw->ctrl2.setup_time            = 0;
 
+    return ESP_OK;
+}
+
+esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, void *buf)
+{
+
+    const bool dma_chan_claimed = spicommon_dma_chan_claim(spi_internal.dmaChan);
+    if(! dma_chan_claimed) {
+        spicommon_periph_free(spi_internal.host);
+        return MY_ESP_ERR_SPI_DMA_ALREADY_IN_USE;
+    }
+
+    spi_dev_t* spi_hw = myspi_get_hw_for_host(spi_host);
+
+    //Setup DMA descriptors
+    spi_internal.descs = (lldesc_t *)calloc(2, sizeof(lldesc_t));
+
+    spi_internal.descs[0].owner = 1;
+    spi_internal.descs[0].eof = 1;
+    spi_internal.descs[0].length = 4;
+    spi_internal.descs[0].size = 4;     //Size must be word-aligned
+    spi_internal.descs[0].qe.stqe_next = spi_internal.descs+1;
+    spi_internal.descs[0].buf = (uint8_t *) buf;
+
+
+    spi_internal.descs[1].owner = 1;
+    spi_internal.descs[1].eof = 1;
+    spi_internal.descs[1].length = 4;
+    spi_internal.descs[1].size = 4;
+    spi_internal.descs[1].qe.stqe_next    = spi_internal.descs;
+    spi_internal.descs[1].buf = (uint8_t *) buf+4;
+
+    //Select DMA channel
+    DPORT_SET_PERI_REG_BITS(
+          DPORT_SPI_DMA_CHAN_SEL_REG
+        , 3
+        , dma_ch
+        , (spi_host* 2)
+    );
+
+    //Reset SPI DMA
+    spi_hw->dma_conf.val        		|= SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST;
+    spi_hw->dma_out_link.start  		= 0;
+    spi_hw->dma_in_link.start   		= 0;
+    spi_hw->dma_conf.val        		&= ~(SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST);
+
+    //DMA temporary workaround: let RX DMA work somehow to avoid the issue in ESP32 v0/v1 silicon
+    spi_hw->dma_in_link.addr            = 0;//(int)(lldescs) & 0xFFFFF;
+    spi_hw->dma_in_link.start           = 0;
+
     //DMA outlink
-    spi->hw->dma_out_link.addr           = (int)(spi->descs) & 0xFFFFF;
-    spi->hw->dma_conf.out_data_burst_en  = 1;
+    spi_hw->dma_out_link.addr           = (int)(spi_internal.descs) & 0xFFFFF;
+    spi_hw->dma_conf.out_data_burst_en  = 1;
 
     // Set circular mode
     //      https://www.esp32.com/viewtopic.php?f=2&t=4011#p18107
@@ -341,6 +387,8 @@ static esp_err_t s_myspi_configure_registers(spi_internal_t *spi)
 
 esp_err_t myspi_init(my_spi_config_t *my_spi_config)
 {
+    esp_err_t ret;
+
     spi_internal.host = my_spi_config->host;
     spi_internal.dmaChan = my_spi_config->dmaChan;
     spi_internal.mosiGpioNum = my_spi_config->mosiGpioNum;
@@ -349,50 +397,8 @@ esp_err_t myspi_init(my_spi_config_t *my_spi_config)
     spi_internal.clk_speed = my_spi_config->spi_clk;
 
     spi_internal.hw				= myspi_get_hw_for_host(spi_internal.host);
-
-    //Set up tx buffer
-    uint32_t *spi_tx_buf;
-    uint16_t len_word = 10;
-    uint16_t len_bytes = sizeof(uint32_t) * len_word;
-
-    ESP_LOGI(__func__, "Allocating tx buffer with %d bytes", len_bytes);
-    spi_tx_buf = (uint32_t *)heap_caps_malloc(len_bytes, MALLOC_CAP_DMA);       	//For DMA
-
-    *spi_tx_buf = 0x44332211;
-    *(spi_tx_buf+1) = 0x88776655;
-
-    //Setup DMA descriptors
-    spi_internal.descs = (lldesc_t *)calloc(2, sizeof(lldesc_t));
-
-    spi_internal.descs[0].owner = 1;
-    spi_internal.descs[0].eof = 1;
-    spi_internal.descs[0].length = 4;
-    spi_internal.descs[0].size = 4;
-    spi_internal.descs[0].qe.stqe_next = spi_internal.descs+1;
-    spi_internal.descs[0].buf = spi_tx_buf;
-
-
-    spi_internal.descs[1].owner = 1;
-    spi_internal.descs[1].eof = 1;
-    spi_internal.descs[1].length = 4;
-    spi_internal.descs[1].size = 4;
-    spi_internal.descs[1].qe.stqe_next    = spi_internal.descs;
-    spi_internal.descs[1].buf = spi_tx_buf+1;
-
-    const int SpiHSyncBackporchWaitCycle = 0;
-
-    const bool spi_periph_claimed = spicommon_periph_claim(spi_internal.host);
-    if(! spi_periph_claimed) {
-        return MY_ESP_ERR_SPI_HOST_ALREADY_IN_USE;
-    }
-
-    const bool dma_chan_claimed = spicommon_dma_chan_claim(spi_internal.dmaChan);
-    if(! dma_chan_claimed) {
-        spicommon_periph_free(spi_internal.host);
-        return MY_ESP_ERR_SPI_DMA_ALREADY_IN_USE;
-    }
    
-    esp_err_t ret;
+    //Configure SPI registers
     ret = s_myspi_configure_registers(&spi_internal);
     if (ret != ESP_OK) {
         ESP_LOGE(__func__, "s_myspi_configure_registers() returned %d", ret);
@@ -400,9 +406,10 @@ esp_err_t myspi_init(my_spi_config_t *my_spi_config)
     }
     ESP_LOGI(__func__, "SPI registers configured!");
 
-
+    //Set up interrupt
     s_myspi_register_interrupt(&spi_internal);
 
+    //Enable interrupt
     esp_intr_enable(spi_internal.intr);
 
     return ESP_OK;
@@ -431,3 +438,13 @@ esp_err_t myspi_start_tx_transfers(void)
     spi_internal.hw->cmd.usr					= 1;	// SPI: Start SPI DMA transfer
     return ESP_OK;
 }
+
+esp_err_t myspi_set_addr(void)
+{
+    //Todo: add init guard
+
+    spi_internal.hw->dma_out_link.start		= 1;	// Start SPI DMA transfer (1)
+    spi_internal.hw->cmd.usr					= 1;	// SPI: Start SPI DMA transfer
+    return ESP_OK;
+}
+
