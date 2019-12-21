@@ -297,19 +297,19 @@ static esp_err_t s_myspi_configure_registers(spi_internal_t *spi)
     spi->hw->user2.usr_command_value     = 0;
 
     //Configure MOSI/MISO
-    spi->hw->user.usr_mosi               = 1;        // Enable MOSI
+    spi->hw->user.usr_mosi               = 0;        
     spi->hw->user.usr_miso               = 0;
-    spi->hw->mosi_dlen.usr_mosi_dbitlen  = 16-1;		// works great! (there's no glitch in 5 hours)
-    spi->hw->miso_dlen.usr_miso_dbitlen  = 0;//16-1;
+    spi->hw->mosi_dlen.usr_mosi_dbitlen  = 0;		// works great! (there's no glitch in 5 hours)
+    spi->hw->miso_dlen.usr_miso_dbitlen  = 0;
 
     //Configure duplex mode
     spi->hw->user.doutdin                = 0;     //Full duplex disabled
     spi->hw->user.sio                    = 1;     //3-line half dublex enabled   
 
     //Configure address phase
-    spi->hw->addr                        = 0x01abcdef;    //Address test. Will send MSB first if SPI_WR_BIT_ORDER = 0.
-    spi->hw->user.usr_addr = 1;   //Enable address phase
-    spi->hw->user1.usr_addr_bitlen = 16-1;
+    spi->hw->addr                        = 0;    //Address test. Will send MSB first if SPI_WR_BIT_ORDER = 0.
+    spi->hw->user.usr_addr               = 0;   
+    spi->hw->user1.usr_addr_bitlen       = 0;
     
     //Enable CS0
     spi->hw->pin.cs0_dis = 0;     
@@ -339,16 +339,16 @@ esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, void *buf)
 
     spi_internal.descs[0].owner = 1;
     spi_internal.descs[0].eof = 1;
-    spi_internal.descs[0].length = 4;
-    spi_internal.descs[0].size = 4;     //Size must be word-aligned
+    spi_internal.descs[0].length = 2;
+    spi_internal.descs[0].size = 2;     //Size must be word-aligned?
     spi_internal.descs[0].qe.stqe_next = spi_internal.descs+1;
     spi_internal.descs[0].buf = (uint8_t *) buf;
 
 
     spi_internal.descs[1].owner = 1;
     spi_internal.descs[1].eof = 1;
-    spi_internal.descs[1].length = 4;
-    spi_internal.descs[1].size = 4;
+    spi_internal.descs[1].length = 2;
+    spi_internal.descs[1].size = 2;
     spi_internal.descs[1].qe.stqe_next    = spi_internal.descs;
     spi_internal.descs[1].buf = (uint8_t *) buf+4;
 
@@ -367,12 +367,12 @@ esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, void *buf)
     spi_hw->dma_conf.val        		&= ~(SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST);
 
     //DMA temporary workaround: let RX DMA work somehow to avoid the issue in ESP32 v0/v1 silicon
-    spi_hw->dma_in_link.addr            = 0;//(int)(lldescs) & 0xFFFFF;
-    spi_hw->dma_in_link.start           = 0;
+    spi_hw->dma_in_link.addr            = (int)(spi_internal.descs) & 0xFFFFF;
+    spi_hw->dma_conf.indscr_burst_en    = 1;
 
     //DMA outlink
-    spi_hw->dma_out_link.addr           = (int)(spi_internal.descs) & 0xFFFFF;
-    spi_hw->dma_conf.out_data_burst_en  = 1;
+    spi_hw->dma_out_link.addr           = 0;//(int)(spi_internal.descs) & 0xFFFFF;
+    spi_hw->dma_conf.out_data_burst_en  = 0;//1;
 
     // Set circular mode
     //      https://www.esp32.com/viewtopic.php?f=2&t=4011#p18107
@@ -434,17 +434,64 @@ esp_err_t myspi_start_tx_transfers(void)
 {
     //Todo: add init guard
 
-    spi_internal.hw->dma_out_link.start		= 1;	// Start SPI DMA transfer (1)
+    //spi_internal.hw->dma_out_link.start		= 1;	// Start SPI DMA transfer (1)
+    spi_internal.hw->dma_in_link.start          = 1;
     spi_internal.hw->cmd.usr					= 1;	// SPI: Start SPI DMA transfer
     return ESP_OK;
 }
 
-esp_err_t myspi_set_addr(void)
-{
+esp_err_t myspi_set_addr(uint32_t addr, uint32_t len, bool enable)
+{ 
     //Todo: add init guard
+    if(enable)
+    {
+        //Configure address phase
+        spi_internal.hw->addr          = addr;    //Address test. Will send MSB first if SPI_WR_BIT_ORDER = 0.
+        spi_internal.hw->user.usr_addr = 1;   //Enable address phase
+        spi_internal.hw->user1.usr_addr_bitlen = len - 1;
+    }
+    else
+    {
+        
+        spi_internal.hw->addr                        = 0x0;    //Address test. Will send MSB first if SPI_WR_BIT_ORDER = 0.
+        spi_internal.hw->user.usr_addr = 0;   //Enable address phase
+        spi_internal.hw->user1.usr_addr_bitlen = 0;   
+    }
+    return ESP_OK;
+}
 
-    spi_internal.hw->dma_out_link.start		= 1;	// Start SPI DMA transfer (1)
-    spi_internal.hw->cmd.usr					= 1;	// SPI: Start SPI DMA transfer
+esp_err_t myspi_set_mosi(uint32_t len, bool enable)
+{
+    if(enable)
+    {
+        //Configure MOSI
+        spi_internal.hw->user.usr_mosi               = 1;        
+        spi_internal.hw->mosi_dlen.usr_mosi_dbitlen  = len-1;
+    }
+    else
+    {
+        spi_internal.hw->user.usr_mosi               = 0;        
+        spi_internal.hw->mosi_dlen.usr_mosi_dbitlen  = 0;
+    }
+    
+    return ESP_OK;
+}
+
+esp_err_t myspi_set_miso(uint32_t len, bool enable)
+{
+    if(enable)
+    {
+        //Configure MISO
+        spi_internal.hw->user.usr_miso               = 1;        
+        spi_internal.hw->miso_dlen.usr_miso_dbitlen  = len-1;
+    }
+    else
+    {
+        //Configure MOSI
+        spi_internal.hw->user.usr_miso               = 0;        
+        spi_internal.hw->miso_dlen.usr_miso_dbitlen  = 0;
+    }
+    
     return ESP_OK;
 }
 

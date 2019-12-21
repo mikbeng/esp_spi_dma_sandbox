@@ -25,6 +25,7 @@ void app_main()
 
     ESP_LOGI(__func__, "SPI EXPERIMENT DMA started");
 
+    //Debug GPIO
     gpio_pad_select_gpio(GPIO_NUM_23);
     /* Set the GPIO as a push/pull output */
     gpio_set_direction(GPIO_NUM_23, GPIO_MODE_OUTPUT);
@@ -41,17 +42,17 @@ void app_main()
     myspi_init(&my_spi_config);
 
     //Set up tx buffer
-    uint32_t *spi_tx_buf;
+    uint32_t *spi_rx_buf;
     uint16_t len_word = 10;
     uint16_t len_bytes = sizeof(uint32_t) * len_word;
 
     ESP_LOGI(__func__, "Allocating tx buffer with %d bytes", len_bytes);
-    spi_tx_buf = (uint32_t *)heap_caps_malloc(len_bytes, MALLOC_CAP_DMA);       	//For DMA
+    spi_rx_buf = (uint32_t *)heap_caps_malloc(len_bytes, MALLOC_CAP_DMA);       	//For DMA
 
-    *spi_tx_buf = 0x44332211;
-    *(spi_tx_buf+1) = 0x88776655;
+    *spi_rx_buf = 0x44332211;
+    *(spi_rx_buf+1) = 0x88776655;
 
-    myspi_DMA_init(my_spi_config.host, my_spi_config.dmaChan, (void *)spi_tx_buf);
+    myspi_DMA_init(my_spi_config.host, my_spi_config.dmaChan, (void *)spi_rx_buf);
 
     //prep command word
     uint8_t TLE5012B_cmd_RW = 0;		//Write operation
@@ -67,6 +68,8 @@ void app_main()
 	uint8_t TLE5012B_cmd_ND = 0;					//No safety word for write
     uint16_t cmd = ((TLE5012B_cmd_RW << 15) | (TLE5012B_cmd_LOCK << 11) | (TLE5012B_cmd_UPD << 10) | (TLE5012B_cmd_ADDR << 4) | (TLE5012B_cmd_ND << 0));
 
+    myspi_set_addr(cmd, 16, 1);  //Command word to TLE5012 in Address phase, will send MSB first if SPI_WR_BIT_ORDER = 0.
+    myspi_set_miso(16,1);
 
     //Kick off tx transfers
     myspi_start_tx_transfers();
