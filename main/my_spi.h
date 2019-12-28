@@ -33,9 +33,9 @@ typedef struct
 
 
 esp_err_t myspi_init(my_spi_config_t *my_spi_config);
-esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, void *buf);
+esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf);
 esp_err_t myspi_deinit(my_spi_config_t *my_spi_config);
-esp_err_t myspi_start_tx_transfers(void);
+esp_err_t myspi_start_transfers(void);
 
 esp_err_t myspi_set_addr(uint32_t addr, uint32_t len, bool enable);
 esp_err_t myspi_set_mosi(uint32_t len, bool enable);

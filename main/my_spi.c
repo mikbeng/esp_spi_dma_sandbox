@@ -58,11 +58,14 @@ static void IRAM_ATTR s_spi_intr_dma(void)
 
     spi_intr_status = spi_internal.hw->dma_int_st.val; //Read interrupt status
 
-    //ets_printf("INT! spi_intr_status:%d\n", spi_intr_status);
-    //ets_printf("INT! spi_intr_raw:%d\n", spi_intr_raw);
+    //Debug prints
+    ets_printf("INT! spi_intr_status:%d\n", spi_intr_status);
+    ets_printf("INT! spi_intr_raw:%d\n", spi_intr_raw);
+    ets_printf("Data; spi_internal.descs[0].buf:%d\n", *spi_internal.descs[0].buf);
+    ets_printf("Data; spi_internal.descs[1].buf:%d\n", *spi_internal.descs[1].buf);
     
     //GPIO debug pin
-    gpio_set_level(GPIO_NUM_23, level);
+    //gpio_set_level(GPIO_NUM_23, level);
     level ^= 1;
 
     if (spi_intr_status & out_eof_int_en) { //Check for interrupt on rising edge on CAP0 signal
@@ -145,19 +148,21 @@ static esp_err_t s_myspi_register_interrupt(spi_internal_t *spi)
     esp_err_t ret;
 
     //DMA interrupt
-    /*
-    spi.hw->dma_int_ena.out_eof = 1;
+    
+    spi->hw->dma_int_ena.in_suc_eof = 1;
     int flags = ESP_INTR_FLAG_IRAM;
-    ret = esp_intr_alloc(ETS_SPI2_DMA_INTR_SOURCE, flags, &s_spi_intr_dma, NULL, &spi.intr_dma);
+    ret = esp_intr_alloc(ETS_SPI2_DMA_INTR_SOURCE, flags, &s_spi_intr_dma, NULL, &spi->intr_dma);
     if (ret != ESP_OK) {
         ESP_LOGE(__func__, "esp_intr_alloc() returned %d", ret);
     }
     //esp_intr_enable(spi.intr);
-    int int_cpu = esp_intr_get_cpu(spi.intr_dma);
+    int int_cpu = esp_intr_get_cpu(spi->intr_dma);
     ESP_LOGI(__func__, "Allocated interrupt on cpu %d", int_cpu);
-    */
+    
+
 
     //SPI interrupt
+    /*
     spi->hw->slave.trans_inten = 1;
     int flags = ESP_INTR_FLAG_IRAM;
     ret = esp_intr_alloc(ETS_SPI2_INTR_SOURCE, flags, &s_spi_intr, NULL, &spi->intr);
@@ -167,7 +172,7 @@ static esp_err_t s_myspi_register_interrupt(spi_internal_t *spi)
     }
     int int_cpu = esp_intr_get_cpu(spi->intr);
     ESP_LOGI(__func__, "Allocated interrupt ETS_SPI2_INTR_SOURCE on cpu %d", int_cpu);
-
+    */
     return ESP_OK;
 }
 
@@ -323,9 +328,8 @@ static esp_err_t s_myspi_configure_registers(spi_internal_t *spi)
     return ESP_OK;
 }
 
-esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, void *buf)
+esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf)
 {
-
     const bool dma_chan_claimed = spicommon_dma_chan_claim(spi_internal.dmaChan);
     if(! dma_chan_claimed) {
         spicommon_periph_free(spi_internal.host);
@@ -340,17 +344,16 @@ esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, void *buf)
     spi_internal.descs[0].owner = 1;
     spi_internal.descs[0].eof = 1;
     spi_internal.descs[0].length = 2;
-    spi_internal.descs[0].size = 2;     //Size must be word-aligned?
+    spi_internal.descs[0].size = 4;     //Size must be word-aligned?
     spi_internal.descs[0].qe.stqe_next = spi_internal.descs+1;
     spi_internal.descs[0].buf = (uint8_t *) buf;
-
 
     spi_internal.descs[1].owner = 1;
     spi_internal.descs[1].eof = 1;
     spi_internal.descs[1].length = 2;
-    spi_internal.descs[1].size = 2;
+    spi_internal.descs[1].size = 4;
     spi_internal.descs[1].qe.stqe_next    = spi_internal.descs;
-    spi_internal.descs[1].buf = (uint8_t *) buf+4;
+    spi_internal.descs[1].buf = (uint8_t *) (buf+1);
 
     //Select DMA channel
     DPORT_SET_PERI_REG_BITS(
@@ -430,7 +433,7 @@ esp_err_t myspi_deinit(my_spi_config_t *my_spi_config)
 	return ESP_OK;
 }
 
-esp_err_t myspi_start_tx_transfers(void)
+esp_err_t myspi_start_transfers(void)
 {
     //Todo: add init guard
 

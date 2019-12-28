@@ -18,6 +18,8 @@
 #include <driver/spi_master.h>
 #include "my_spi.h"k
 
+uint32_t *spi_rx_buf;
+
 void app_main()
 {
     esp_err_t ret;
@@ -26,9 +28,9 @@ void app_main()
     ESP_LOGI(__func__, "SPI EXPERIMENT DMA started");
 
     //Debug GPIO
-    gpio_pad_select_gpio(GPIO_NUM_23);
+    //gpio_pad_select_gpio(GPIO_NUM_23);
     /* Set the GPIO as a push/pull output */
-    gpio_set_direction(GPIO_NUM_23, GPIO_MODE_OUTPUT);
+    //gpio_set_direction(GPIO_NUM_23, GPIO_MODE_OUTPUT);
 
 
     //Init myspi
@@ -42,20 +44,16 @@ void app_main()
     myspi_init(&my_spi_config);
 
     //Set up tx buffer
-    uint32_t *spi_rx_buf;
     uint16_t len_word = 10;
     uint16_t len_bytes = sizeof(uint32_t) * len_word;
 
     ESP_LOGI(__func__, "Allocating tx buffer with %d bytes", len_bytes);
     spi_rx_buf = (uint32_t *)heap_caps_malloc(len_bytes, MALLOC_CAP_DMA);       	//For DMA
 
-    *spi_rx_buf = 0x44332211;
-    *(spi_rx_buf+1) = 0x88776655;
-
-    myspi_DMA_init(my_spi_config.host, my_spi_config.dmaChan, (void *)spi_rx_buf);
+    myspi_DMA_init(my_spi_config.host, my_spi_config.dmaChan, spi_rx_buf);
 
     //prep command word
-    uint8_t TLE5012B_cmd_RW = 0;		//Write operation
+    uint8_t TLE5012B_cmd_RW = 1;		//read operation
     uint8_t address = 0x00;
     uint8_t TLE5012B_cmd_LOCK = 0b0000;
 	if (address >= 0x05 && address <= 0x11)
@@ -65,17 +63,18 @@ void app_main()
 
 	uint8_t TLE5012B_cmd_UPD = 0;
 	uint8_t TLE5012B_cmd_ADDR = address;
-	uint8_t TLE5012B_cmd_ND = 0;					//No safety word for write
+	uint8_t TLE5012B_cmd_ND = 0;				//0x01 for Safety word. 0x00 for no Safety word
     uint16_t cmd = ((TLE5012B_cmd_RW << 15) | (TLE5012B_cmd_LOCK << 11) | (TLE5012B_cmd_UPD << 10) | (TLE5012B_cmd_ADDR << 4) | (TLE5012B_cmd_ND << 0));
 
     myspi_set_addr(cmd, 16, 1);  //Command word to TLE5012 in Address phase, will send MSB first if SPI_WR_BIT_ORDER = 0.
     myspi_set_miso(16,1);
 
-    //Kick off tx transfers
-    myspi_start_tx_transfers();
+    //Kick off transfers
+    myspi_start_transfers();
 
     while(1)
     {   
         vTaskDelay(1000 / portTICK_PERIOD_MS);
+        myspi_start_transfers();
     }
 }
