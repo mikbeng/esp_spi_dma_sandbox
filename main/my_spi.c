@@ -270,13 +270,20 @@ static esp_err_t s_myspi_configure_registers(spi_internal_t *spi)
     s_myspi_configure_clock(spi);
 
     //Configure bit order
-    spi->hw->ctrl.rd_bit_order           = 0;    // MSB first
-    spi->hw->ctrl.wr_bit_order           = 1;    // LSB first
+    spi->hw->ctrl.rd_bit_order           = 0;    // 0:MSB first. 1:LSB first
+    spi->hw->ctrl.wr_bit_order           = 0;    // 0:MSB first. 1:LSB first
 
-    //Configure polarity
+    spi->hw->user.wr_byte_order          = 1;    //BIG endian
+    spi->hw->user.rd_byte_order          = 1;    //BIG endian
+
+    //Configure polarity for mode 1 according to table 27 in tech data sheet p.125
     spi->hw->pin.ck_idle_edge            = 0;
-    spi->hw->user.ck_out_edge            = 0;
+    spi->hw->user.ck_out_edge            = 1;
     spi->hw->ctrl2.miso_delay_mode       = 0;
+    spi->hw->ctrl2.miso_delay_num        = 0;
+    spi->hw->ctrl2.mosi_delay_mode       = 0;
+    spi->hw->ctrl2.mosi_delay_num        = 0;
+
 
     //configure dummy bits
     spi->hw->user.usr_dummy              = 0;
@@ -353,7 +360,7 @@ esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf)
     spi_internal.descs[1].length = 2;
     spi_internal.descs[1].size = 4;
     spi_internal.descs[1].qe.stqe_next    = spi_internal.descs;
-    spi_internal.descs[1].buf = (uint8_t *) (buf+1);
+    spi_internal.descs[1].buf = ((uint8_t *)buf) + 4;
 
     //Select DMA channel
     DPORT_SET_PERI_REG_BITS(
