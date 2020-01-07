@@ -42,7 +42,7 @@ typedef struct {
 /* [GLOB] Global variables                                                   */
 /* ========================================================================= */
 spi_internal_t spi_internal;
-int level = 0;
+int level = 1;
 	
 /* ========================================================================= */
 /* [PFUN] Private functions implementations                                  */
@@ -51,6 +51,9 @@ int level = 0;
 // This is run in interrupt context.
 static void IRAM_ATTR s_spi_intr_dma(void)
 {
+    //Temporarily disable interrupt 
+    //esp_intr_disable(spi_internal.intr_dma);
+
     uint32_t spi_intr_status;
     uint32_t spi_intr_raw;
 
@@ -59,15 +62,11 @@ static void IRAM_ATTR s_spi_intr_dma(void)
     spi_intr_status = spi_internal.hw->dma_int_st.val; //Read interrupt status
 
     //Debug prints
-    ets_printf("INT! spi_intr_status:%d\n", spi_intr_status);
-    ets_printf("INT! spi_intr_raw:%d\n", spi_intr_raw);
-    ets_printf("Data; spi_internal.descs[0].buf:%d\n", *spi_internal.descs[0].buf);
-    ets_printf("Data; spi_internal.descs[1].buf:%d\n", *spi_internal.descs[1].buf);
-    
-    //GPIO debug pin
-    //gpio_set_level(GPIO_NUM_23, level);
-    level ^= 1;
+    //ets_printf("DMA INT! spi_intr_status:%d\n", spi_intr_status);
+    //ets_printf("DMA INT! spi_intr_raw:%d\n", spi_intr_raw);
 
+
+    
     if (spi_intr_status & out_eof_int_en) { //Check for interrupt on rising edge on CAP0 signal
 
         //ets_printf("INT! spi_intr_status:%d\n", spi_intr_status);
@@ -76,8 +75,14 @@ static void IRAM_ATTR s_spi_intr_dma(void)
         //spi.hw->dma_out_link.start		= 1;	// Start SPI DMA transfer (1)
         //spi.hw->cmd.usr					= 1;	// SPI: Start SPI DMA transfer
     }
+    else if(spi_intr_status & in_suc_eof_int_en) { 
+        spi_internal.hw->dma_in_link.start          = 1;
+    }
 
     spi_internal.hw->dma_int_clr.val = spi_intr_status;     //Clears the interrupt
+
+    //Finally, enable the interrupt
+    //esp_intr_enable(spi_internal.intr_dma);
 }
 
 // This is run in interrupt context.
@@ -87,25 +92,29 @@ static void IRAM_ATTR s_spi_intr(void)
     esp_intr_disable(spi_internal.intr);
     uint32_t spi_intr_slave_val;
 
+    //GPIO debug pin
+    gpio_set_level(GPIO_NUM_4, level);
+    level ^= 1;
+
     spi_intr_slave_val = spi_internal.hw->slave.val; //Read interrupt status
 
-    //ets_printf("INT! spi_intr_slave_val:%d\n", spi_intr_slave_val);
-    //ets_printf("INT! spi_intr_raw:%d\n", spi_intr_raw);
+    //ets_printf("SPI INT! spi_intr_slave_val:%d\n", spi_intr_slave_val);
+    //ets_printf("SPI INT! spi_intr_raw:%d\n", spi_intr_raw);
     
     //GPIO debug pin
-    gpio_set_level(GPIO_NUM_23, level);
-    level ^= 1;
+    //gpio_set_level(GPIO_NUM_4, level);
+    //level ^= 1;
 
     if (spi_intr_slave_val & spi_trans_done_int) { //Check for interrupt on rising edge on CAP0 signal
 
-        spi_internal.hw->dma_out_link.start		= 1;	// Start SPI DMA transfer (1)
+        //Start new transfer
         spi_internal.hw->cmd.usr					= 1;	// SPI: Start SPI DMA transfer
-
         spi_internal.hw->slave.trans_done = 0;     //Clears the interrupt
     }
     
     //Finally, enable the interrupt
     esp_intr_enable(spi_internal.intr);
+
 }
 
 static spi_dev_t *myspi_get_hw_for_host(
@@ -159,20 +168,17 @@ static esp_err_t s_myspi_register_interrupt(spi_internal_t *spi)
     int int_cpu = esp_intr_get_cpu(spi->intr_dma);
     ESP_LOGI(__func__, "Allocated interrupt on cpu %d", int_cpu);
     
-
-
     //SPI interrupt
-    /*
     spi->hw->slave.trans_inten = 1;
-    int flags = ESP_INTR_FLAG_IRAM;
+    flags = ESP_INTR_FLAG_IRAM;
     ret = esp_intr_alloc(ETS_SPI2_INTR_SOURCE, flags, &s_spi_intr, NULL, &spi->intr);
     if (ret != ESP_OK) {
         ESP_LOGE(__func__, "esp_intr_alloc() returned %d", ret);
         return ESP_FAIL;
     }
-    int int_cpu = esp_intr_get_cpu(spi->intr);
+    int_cpu = esp_intr_get_cpu(spi->intr);
     ESP_LOGI(__func__, "Allocated interrupt ETS_SPI2_INTR_SOURCE on cpu %d", int_cpu);
-    */
+
     return ESP_OK;
 }
 
@@ -328,9 +334,9 @@ static esp_err_t s_myspi_configure_registers(spi_internal_t *spi)
 
     //CS hold & setup time
     spi->hw->user.cs_hold = 1;
-    spi->hw->ctrl2.hold_time = 10;
-    spi->hw->user.cs_setup               = 0;
-    spi->hw->ctrl2.setup_time            = 0;
+    spi->hw->ctrl2.hold_time = 3;
+    spi->hw->user.cs_setup               = 1;
+    spi->hw->ctrl2.setup_time            = 3;
 
     return ESP_OK;
 }
@@ -360,7 +366,7 @@ esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf)
     spi_internal.descs[1].length = 2;
     spi_internal.descs[1].size = 4;
     spi_internal.descs[1].qe.stqe_next    = spi_internal.descs;
-    spi_internal.descs[1].buf = ((uint8_t *)buf) + 4;
+    spi_internal.descs[1].buf = (uint8_t *) (buf+1);
 
     //Select DMA channel
     DPORT_SET_PERI_REG_BITS(
@@ -376,13 +382,13 @@ esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf)
     spi_hw->dma_in_link.start   		= 0;
     spi_hw->dma_conf.val        		&= ~(SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST);
 
-    //DMA temporary workaround: let RX DMA work somehow to avoid the issue in ESP32 v0/v1 silicon
+    //Configure inlink descriptor
     spi_hw->dma_in_link.addr            = (int)(spi_internal.descs) & 0xFFFFF;
     spi_hw->dma_conf.indscr_burst_en    = 1;
 
-    //DMA outlink
-    spi_hw->dma_out_link.addr           = 0;//(int)(spi_internal.descs) & 0xFFFFF;
-    spi_hw->dma_conf.out_data_burst_en  = 0;//1;
+    //Configure outlink descriptor
+    spi_hw->dma_out_link.addr           = 0;
+    spi_hw->dma_conf.out_data_burst_en  = 0;
 
     // Set circular mode
     //      https://www.esp32.com/viewtopic.php?f=2&t=4011#p18107
@@ -456,8 +462,8 @@ esp_err_t myspi_set_addr(uint32_t addr, uint32_t len, bool enable)
     if(enable)
     {
         //Configure address phase
-        spi_internal.hw->addr          = addr;    //Address test. Will send MSB first if SPI_WR_BIT_ORDER = 0.
-        spi_internal.hw->user.usr_addr = 1;   //Enable address phase
+        spi_internal.hw->addr          = (addr << len);    //Address test. Will send MSB first if SPI_WR_BIT_ORDER = 0.
+        spi_internal.hw->user.usr_addr = 1;     //Enable address phase
         spi_internal.hw->user1.usr_addr_bitlen = len - 1;
     }
     else
