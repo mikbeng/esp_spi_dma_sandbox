@@ -42,7 +42,9 @@ typedef struct {
 /* [GLOB] Global variables                                                   */
 /* ========================================================================= */
 spi_internal_t spi_internal;
-int level = 1;
+int level_dma = 1;
+int level_spi = 1;
+volatile int int_cnt = 0;
 	
 /* ========================================================================= */
 /* [PFUN] Private functions implementations                                  */
@@ -52,7 +54,7 @@ int level = 1;
 static void IRAM_ATTR s_spi_intr_dma(void)
 {
     //Temporarily disable interrupt 
-    //esp_intr_disable(spi_internal.intr_dma);
+    esp_intr_disable(spi_internal.intr_dma);
 
     uint32_t spi_intr_status;
     uint32_t spi_intr_raw;
@@ -61,19 +63,16 @@ static void IRAM_ATTR s_spi_intr_dma(void)
 
     spi_intr_status = spi_internal.hw->dma_int_st.val; //Read interrupt status
 
+    //GPIO debug pin
+    gpio_set_level(GPIO_NUM_4, level_dma);
+    level_dma ^= 1;
+
     //Debug prints
     //ets_printf("DMA INT! spi_intr_status:%d\n", spi_intr_status);
     //ets_printf("DMA INT! spi_intr_raw:%d\n", spi_intr_raw);
-
-
     
-    if (spi_intr_status & out_eof_int_en) { //Check for interrupt on rising edge on CAP0 signal
+    if (spi_intr_status & out_eof_int_en) { 
 
-        //ets_printf("INT! spi_intr_status:%d\n", spi_intr_status);
-        //ets_printf("INT! spi_intr_raw:%d\n", spi_intr_raw);
-        //spi.hw->dma_in_link.start   	= 0;
-        //spi.hw->dma_out_link.start		= 1;	// Start SPI DMA transfer (1)
-        //spi.hw->cmd.usr					= 1;	// SPI: Start SPI DMA transfer
     }
     else if(spi_intr_status & in_suc_eof_int_en) { 
         spi_internal.hw->dma_in_link.start          = 1;
@@ -82,7 +81,7 @@ static void IRAM_ATTR s_spi_intr_dma(void)
     spi_internal.hw->dma_int_clr.val = spi_intr_status;     //Clears the interrupt
 
     //Finally, enable the interrupt
-    //esp_intr_enable(spi_internal.intr_dma);
+    esp_intr_enable(spi_internal.intr_dma);
 }
 
 // This is run in interrupt context.
@@ -90,11 +89,12 @@ static void IRAM_ATTR s_spi_intr(void)
 {
     //Temporarily disable interrupt 
     esp_intr_disable(spi_internal.intr);
+
     uint32_t spi_intr_slave_val;
 
     //GPIO debug pin
-    gpio_set_level(GPIO_NUM_4, level);
-    level ^= 1;
+    gpio_set_level(GPIO_NUM_2, level_spi);
+    level_spi ^= 1;
 
     spi_intr_slave_val = spi_internal.hw->slave.val; //Read interrupt status
 
@@ -105,16 +105,23 @@ static void IRAM_ATTR s_spi_intr(void)
     //gpio_set_level(GPIO_NUM_4, level);
     //level ^= 1;
 
-    if (spi_intr_slave_val & spi_trans_done_int) { //Check for interrupt on rising edge on CAP0 signal
+    if (spi_intr_slave_val & spi_trans_done_int) { 
+
+        //Check register SPI_IN_SUC_EOF_DES_ADDR_REG to get "The last inlink descriptor address when SPI DMA encountered EOF. (RO)"
+        //This way, we should be able to get the address of the buffer containing the most recent data.
+
+        ets_printf("SPI INT! SPI_IN_SUC_EOF_DES_ADDR_REG:%d\n", spi_internal.hw->dma_in_suc_eof_des_addr);
+
+
+        spi_internal.hw->dma_in_link.start          = 1;
 
         //Start new transfer
-        spi_internal.hw->cmd.usr					= 1;	// SPI: Start SPI DMA transfer
-        spi_internal.hw->slave.trans_done = 0;     //Clears the interrupt
+        spi_internal.hw->cmd.usr = 1;	            // SPI: Start new SPI transfer
+        spi_internal.hw->slave.trans_done = 0;      //Clears the interrupt
     }
     
     //Finally, enable the interrupt
     esp_intr_enable(spi_internal.intr);
-
 }
 
 static spi_dev_t *myspi_get_hw_for_host(
@@ -157,7 +164,7 @@ static esp_err_t s_myspi_register_interrupt(spi_internal_t *spi)
     esp_err_t ret;
 
     //DMA interrupt
-    
+    /*
     spi->hw->dma_int_ena.in_suc_eof = 1;
     int flags = ESP_INTR_FLAG_IRAM;
     ret = esp_intr_alloc(ETS_SPI2_DMA_INTR_SOURCE, flags, &s_spi_intr_dma, NULL, &spi->intr_dma);
@@ -167,16 +174,17 @@ static esp_err_t s_myspi_register_interrupt(spi_internal_t *spi)
     //esp_intr_enable(spi.intr);
     int int_cpu = esp_intr_get_cpu(spi->intr_dma);
     ESP_LOGI(__func__, "Allocated interrupt on cpu %d", int_cpu);
-    
+    */
+
     //SPI interrupt
     spi->hw->slave.trans_inten = 1;
-    flags = ESP_INTR_FLAG_IRAM;
+    int flags = ESP_INTR_FLAG_IRAM;
     ret = esp_intr_alloc(ETS_SPI2_INTR_SOURCE, flags, &s_spi_intr, NULL, &spi->intr);
     if (ret != ESP_OK) {
         ESP_LOGE(__func__, "esp_intr_alloc() returned %d", ret);
         return ESP_FAIL;
     }
-    int_cpu = esp_intr_get_cpu(spi->intr);
+    int int_cpu = esp_intr_get_cpu(spi->intr);
     ESP_LOGI(__func__, "Allocated interrupt ETS_SPI2_INTR_SOURCE on cpu %d", int_cpu);
 
     return ESP_OK;

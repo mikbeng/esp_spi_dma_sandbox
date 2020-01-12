@@ -32,6 +32,10 @@ void app_main()
     /* Set the GPIO as a push/pull output */
     gpio_set_direction(GPIO_NUM_4, GPIO_MODE_OUTPUT);
 
+    gpio_pad_select_gpio(GPIO_NUM_2);
+    /* Set the GPIO as a push/pull output */
+    gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
+
 
     //Init myspi
     my_spi_config.host			= HSPI_HOST;
@@ -63,7 +67,7 @@ void app_main()
 
 	uint8_t TLE5012B_cmd_UPD = 0;
 	uint8_t TLE5012B_cmd_ADDR = address;
-	uint8_t TLE5012B_cmd_ND = 3;				//0x01 for Safety word. 0x00 for no Safety word
+	uint8_t TLE5012B_cmd_ND = 0;				//0x01 for Safety word. 0x00 for no Safety word
     uint16_t cmd = ((TLE5012B_cmd_RW << 15) | (TLE5012B_cmd_LOCK << 11) | (TLE5012B_cmd_UPD << 10) | (TLE5012B_cmd_ADDR << 4) | (TLE5012B_cmd_ND << 0));
 
     myspi_set_addr(cmd, 16, 1);  //Command word to TLE5012 in Address phase, will send MSB first if SPI_WR_BIT_ORDER = 0.
@@ -80,7 +84,7 @@ void app_main()
         //revol_reg = (uint16_t)((*(spi_rx_buf) >> 16) && 0x0000FFFF);
         //rev = revol_reg && 0x01FF;
         //ESP_LOGI(__func__, "revol_reg: %d ", revol_reg);
-        //ESP_LOGI(__func__, "rev: %d ", rev);
+        
         myspi_start_transfers();
     }
 }

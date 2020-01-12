@@ -41,6 +41,8 @@ esp_err_t myspi_set_addr(uint32_t addr, uint32_t len, bool enable);
 esp_err_t myspi_set_mosi(uint32_t len, bool enable);
 esp_err_t myspi_set_miso(uint32_t len, bool enable);
 
+extern volatile int int_cnt;
+
 #ifdef __cplusplus
 } // extern "C"
 #endif
