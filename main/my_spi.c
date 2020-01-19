@@ -21,17 +21,18 @@
 /* ========================================================================= */
 
 typedef struct {
-    spi_host_device_t	host;			// HSPI_HOST or VSPI_HOST
-    int					dmaChan;		// 0, 1 or 2
-    gpio_num_t			mosiGpioNum;	// GPIO MOSI
-    gpio_num_t			sckGpioNum;	    // GPIO SCK
-    gpio_num_t			csGpioNum;	    // GPIO CS
-    spi_dev_t*			hw;
-    lldesc_t            *descs;         //DMA Descriptor
-    intr_handle_t       intr;           //Interrupt handle for spi 
-    intr_handle_t       intr_dma;       //Interrupt handle for spi dma
-    double              clk_speed;
-    int                 dummy_cycle;
+    spi_host_device_t	    host;			// HSPI_HOST or VSPI_HOST
+    int					    dmaChan;		// 0, 1 or 2
+    gpio_num_t			    mosiGpioNum;	// GPIO MOSI
+    gpio_num_t			    sckGpioNum;	    // GPIO SCK
+    gpio_num_t			    csGpioNum;	    // GPIO CS
+    spi_dev_t*			    hw;
+    lldesc_t*               descs;         //DMA Descriptor
+    lldesc_t*               last_inlink_desc_eof;
+    intr_handle_t           intr;           //Interrupt handle for spi 
+    intr_handle_t           intr_dma;       //Interrupt handle for spi dma
+    double                  clk_speed;
+    int                     dummy_cycle;
 } spi_internal_t;
 
 /* ========================================================================= */
@@ -45,6 +46,8 @@ spi_internal_t spi_internal;
 int level_dma = 1;
 int level_spi = 1;
 volatile int int_cnt = 0;
+volatile uint16_t test1, test2;
+
 	
 /* ========================================================================= */
 /* [PFUN] Private functions implementations                                  */
@@ -101,17 +104,17 @@ static void IRAM_ATTR s_spi_intr(void)
     //ets_printf("SPI INT! spi_intr_slave_val:%d\n", spi_intr_slave_val);
     //ets_printf("SPI INT! spi_intr_raw:%d\n", spi_intr_raw);
     
-    //GPIO debug pin
-    //gpio_set_level(GPIO_NUM_4, level);
-    //level ^= 1;
-
     if (spi_intr_slave_val & spi_trans_done_int) { 
 
-        //Check register SPI_IN_SUC_EOF_DES_ADDR_REG to get "The last inlink descriptor address when SPI DMA encountered EOF. (RO)"
-        //This way, we should be able to get the address of the buffer containing the most recent data.
+        /*
+        ets_printf("SPI INT! dma_in_suc_eof_des_addr:0x%x\n", spi_internal.hw->dma_in_suc_eof_des_addr);
+        ets_printf("SPI INT! dma_inlink_dscr:0x%x\n", spi_internal.hw->dma_inlink_dscr);
+        ets_printf("SPI INT! dma_inlink_dscr_bf0:0x%x\n", spi_internal.hw->dma_inlink_dscr_bf0);
+        ets_printf("SPI INT! dma_inlink_dscr_bf1:0x%x\n", spi_internal.hw->dma_inlink_dscr_bf1);
+        */
 
-        ets_printf("SPI INT! SPI_IN_SUC_EOF_DES_ADDR_REG:%d\n", spi_internal.hw->dma_in_suc_eof_des_addr);
-
+        //ets_printf("SPI INT! *dma_data_p:0x%x\n", *dma_data_p);
+        //ets_printf("SPI INT! rx_data:0x%x\n", rx_data);
 
         spi_internal.hw->dma_in_link.start          = 1;
 
@@ -362,6 +365,8 @@ esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf)
     //Setup DMA descriptors
     spi_internal.descs = (lldesc_t *)calloc(2, sizeof(lldesc_t));
 
+    ESP_LOGI(__func__, "Allocated memory for DMA desc. spi_internal.descs[0] address: %p", (void*) spi_internal.descs);
+
     spi_internal.descs[0].owner = 1;
     spi_internal.descs[0].eof = 1;
     spi_internal.descs[0].length = 2;
@@ -375,6 +380,12 @@ esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf)
     spi_internal.descs[1].size = 4;
     spi_internal.descs[1].qe.stqe_next    = spi_internal.descs;
     spi_internal.descs[1].buf = (uint8_t *) (buf+1);
+
+    //ESP_LOGI(__func__, "spi_internal.descs[0] address: %p", (void*) spi_internal.descs[0]);
+    //ESP_LOGI(__func__, "spi_internal.descs[1] address: %p", (void*) spi_internal.descs[1]);
+
+    ESP_LOGI(__func__, "DMA buffer 0 address: %p", (void*) spi_internal.descs[0].buf);
+    ESP_LOGI(__func__, "DMA buffer 1 address: %p", (void*) spi_internal.descs[1].buf);
 
     //Select DMA channel
     DPORT_SET_PERI_REG_BITS(
@@ -519,3 +530,34 @@ esp_err_t myspi_set_miso(uint32_t len, bool enable)
     return ESP_OK;
 }
 
+esp_err_t myspi_get_dma_data_rx(uint8_t *rxdata, uint32_t len_bytes)
+{
+
+    //Check register SPI_IN_SUC_EOF_DES_ADDR_REG to get "The last inlink descriptor address when SPI DMA encountered EOF. (RO)"
+    //This way, we should be able to get the address of the buffer containing the most recent data.
+
+    uint32_t dma_in_eof_addr_internal;
+    uint32_t dma_data_size;
+    uint8_t *dma_data_buf;
+
+    //Get the last inlink descriptor address when SPI DMA encountered EOF
+    //Todo - make atomic atomic_load()
+    dma_in_eof_addr_internal = spi_internal.hw->dma_in_suc_eof_des_addr;
+    
+    //Assign pointer to the address
+    spi_internal.last_inlink_desc_eof = (lldesc_t *)dma_in_eof_addr_internal;
+    
+    //Get the corresponding data buffer pointer
+    dma_data_buf = spi_internal.last_inlink_desc_eof->buf;
+    dma_data_size = spi_internal.last_inlink_desc_eof->length;
+
+    //argument len is not really needed? Since we have the dma_data_size?
+    //We could compare them as sanity check..
+
+    for (size_t i = 0; i < dma_data_size; i++)
+    {
+        rxdata[i] = *dma_data_buf;
+    }
+    
+    return ESP_OK;
+}

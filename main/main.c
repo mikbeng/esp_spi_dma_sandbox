@@ -25,6 +25,9 @@ void app_main()
     esp_err_t ret;
     my_spi_config_t my_spi_config;
 
+    uint16_t revol_reg, rev;
+    uint8_t rx_data[4] = {0};
+
     ESP_LOGI(__func__, "SPI EXPERIMENT DMA started");
 
     //Debug GPIO
@@ -54,11 +57,13 @@ void app_main()
     ESP_LOGI(__func__, "Allocating tx buffer with %d bytes", len_bytes);
     spi_rx_buf = (uint32_t *)heap_caps_malloc(len_bytes, MALLOC_CAP_DMA);       	//For DMA
 
+    ESP_LOGI(__func__, "Successfully allocates spi_buffer on address: %p",spi_rx_buf);
+
     myspi_DMA_init(my_spi_config.host, my_spi_config.dmaChan, spi_rx_buf);
 
     //prep command word
     uint8_t TLE5012B_cmd_RW = 1;		//read operation
-    uint8_t address = 0x02;
+    uint8_t address = 0x04;
     uint8_t TLE5012B_cmd_LOCK = 0b0000;
 	if (address >= 0x05 && address <= 0x11)
 	{
@@ -76,15 +81,16 @@ void app_main()
     //Kick off transfers
     myspi_start_transfers();
 
-    uint16_t revol_reg, rev;
-
     while(1)
     { 
         vTaskDelay(1000 / portTICK_PERIOD_MS);
+
+        myspi_get_dma_data_rx(&rx_data, 2);
+        revol_reg = ((uint16_t)(rx_data[0]) << 8) | ((uint16_t)rx_data[1]);
+        rev = revol_reg && 0x01FF;
         //revol_reg = (uint16_t)((*(spi_rx_buf) >> 16) && 0x0000FFFF);
         //rev = revol_reg && 0x01FF;
-        //ESP_LOGI(__func__, "revol_reg: %d ", revol_reg);
-        
-        myspi_start_transfers();
+        ESP_LOGI(__func__, "revol_reg: %d ", revol_reg);
+        ESP_LOGI(__func__, "rev: %d ", rev);
     }
 }

@@ -40,6 +40,7 @@ esp_err_t myspi_start_transfers(void);
 esp_err_t myspi_set_addr(uint32_t addr, uint32_t len, bool enable);
 esp_err_t myspi_set_mosi(uint32_t len, bool enable);
 esp_err_t myspi_set_miso(uint32_t len, bool enable);
+esp_err_t myspi_get_dma_data_rx(uint8_t *rxdata, uint32_t len_bytes);
 
 extern volatile int int_cnt;
 
