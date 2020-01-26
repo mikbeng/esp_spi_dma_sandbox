@@ -32,15 +32,15 @@ typedef struct
 }my_spi_config_t;
 
 
-esp_err_t myspi_init(my_spi_config_t *my_spi_config);
-esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf);
-esp_err_t myspi_deinit(my_spi_config_t *my_spi_config);
-esp_err_t myspi_start_transfers(void);
+esp_err_t mspi_init(my_spi_config_t *my_spi_config);
+esp_err_t mspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf);
+esp_err_t mspi_deinit(my_spi_config_t *my_spi_config);
+esp_err_t mspi_start_transfers(void);
 
-esp_err_t myspi_set_addr(uint32_t addr, uint32_t len, bool enable);
-esp_err_t myspi_set_mosi(uint32_t len, bool enable);
-esp_err_t myspi_set_miso(uint32_t len, bool enable);
-esp_err_t myspi_get_dma_data_rx(uint8_t *rxdata, uint32_t len_bytes);
+esp_err_t mspi_set_addr(uint32_t addr, uint32_t len, bool enable);
+esp_err_t mspi_set_mosi(uint32_t len, bool enable);
+esp_err_t mspi_set_miso(uint32_t len, bool enable);
+esp_err_t mspi_get_dma_data_rx(uint8_t *rxdata, uint32_t len_bytes);
 
 extern volatile int int_cnt;
 

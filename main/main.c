@@ -25,7 +25,8 @@ void app_main()
     esp_err_t ret;
     my_spi_config_t my_spi_config;
 
-    uint16_t revol_reg, rev;
+    uint16_t revol_reg;
+    int8_t rev;
     uint8_t rx_data[4] = {0};
 
     ESP_LOGI(__func__, "SPI EXPERIMENT DMA started");
@@ -40,7 +41,7 @@ void app_main()
     gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
 
 
-    //Init myspi
+    //Init mspi
     my_spi_config.host			= HSPI_HOST;
     my_spi_config.dmaChan		= 1;
     my_spi_config.mosiGpioNum	= PIN_NUM_MOSI;
@@ -48,7 +49,7 @@ void app_main()
     my_spi_config.csGpioNum     = PIN_NUM_CS;
     my_spi_config.spi_clk       = 1000000;  //8Mhz
     
-    myspi_init(&my_spi_config);
+    mspi_init(&my_spi_config);
 
     //Set up tx buffer
     uint16_t len_word = 10;
@@ -59,7 +60,7 @@ void app_main()
 
     ESP_LOGI(__func__, "Successfully allocates spi_buffer on address: %p",spi_rx_buf);
 
-    myspi_DMA_init(my_spi_config.host, my_spi_config.dmaChan, spi_rx_buf);
+    mspi_DMA_init(my_spi_config.host, my_spi_config.dmaChan, spi_rx_buf);
 
     //prep command word
     uint8_t TLE5012B_cmd_RW = 1;		//read operation
@@ -75,21 +76,20 @@ void app_main()
 	uint8_t TLE5012B_cmd_ND = 0;				//0x01 for Safety word. 0x00 for no Safety word
     uint16_t cmd = ((TLE5012B_cmd_RW << 15) | (TLE5012B_cmd_LOCK << 11) | (TLE5012B_cmd_UPD << 10) | (TLE5012B_cmd_ADDR << 4) | (TLE5012B_cmd_ND << 0));
 
-    myspi_set_addr(cmd, 16, 1);  //Command word to TLE5012 in Address phase, will send MSB first if SPI_WR_BIT_ORDER = 0.
-    myspi_set_miso(16,1);
+    mspi_set_addr(cmd, 16, 1);  //Command word to TLE5012 in Address phase, will send MSB first if SPI_WR_BIT_ORDER = 0.
+    mspi_set_miso(16,1);
 
     //Kick off transfers
-    myspi_start_transfers();
+    mspi_start_transfers();
 
     while(1)
     { 
         vTaskDelay(1000 / portTICK_PERIOD_MS);
 
-        myspi_get_dma_data_rx(&rx_data, 2);
+        mspi_get_dma_data_rx(&rx_data, 2);
         revol_reg = ((uint16_t)(rx_data[0]) << 8) | ((uint16_t)rx_data[1]);
-        rev = revol_reg && 0x01FF;
-        //revol_reg = (uint16_t)((*(spi_rx_buf) >> 16) && 0x0000FFFF);
-        //rev = revol_reg && 0x01FF;
+        rev = (int8_t)(revol_reg & 0x01FF);
+
         ESP_LOGI(__func__, "revol_reg: %d ", revol_reg);
         ESP_LOGI(__func__, "rev: %d ", rev);
     }

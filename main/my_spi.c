@@ -127,7 +127,7 @@ static void IRAM_ATTR s_spi_intr(void)
     esp_intr_enable(spi_internal.intr);
 }
 
-static spi_dev_t *myspi_get_hw_for_host(
+static spi_dev_t *s_mspi_get_hw_for_host(
     spi_host_device_t host
 ) {
     switch(host) {
@@ -139,7 +139,7 @@ static spi_dev_t *myspi_get_hw_for_host(
 }
 
 
-static esp_err_t getSpidOutByHost(
+static esp_err_t s_getSpidOutByHost(
     spi_host_device_t host
 ) {
     switch(host) {
@@ -151,7 +151,7 @@ static esp_err_t getSpidOutByHost(
 }
 
 
-static esp_err_t getSpidInByHost(
+static esp_err_t s_getSpidInByHost(
     spi_host_device_t host
 ) {
     switch(host) {
@@ -162,7 +162,7 @@ static esp_err_t getSpidInByHost(
     }
 }
 
-static esp_err_t s_myspi_register_interrupt(spi_internal_t *spi)
+static esp_err_t s_mspi_register_interrupt(spi_internal_t *spi)
 {
     esp_err_t ret;
 
@@ -193,7 +193,7 @@ static esp_err_t s_myspi_register_interrupt(spi_internal_t *spi)
     return ESP_OK;
 }
 
-static esp_err_t s_myspi_configure_clock(spi_internal_t *spi)
+static esp_err_t s_mspi_configure_clock(spi_internal_t *spi)
 {
 	// Set SPI Clock
 	//  Register 7.7: SPI_CLOCK_REG (0x18)
@@ -236,13 +236,13 @@ static esp_err_t s_myspi_configure_clock(spi_internal_t *spi)
     return ESP_OK;
 }
 
-static esp_err_t s_myspi_configure_GPIO(spi_internal_t *spi)
+static esp_err_t s_mspi_configure_GPIO(spi_internal_t *spi)
 {
     //Configure GPIOs for 3-wire half duplex (MOSI,SCK and CS)
     PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[spi->mosiGpioNum], PIN_FUNC_GPIO);
     gpio_set_direction(spi->mosiGpioNum, GPIO_MODE_INPUT_OUTPUT);
-    gpio_matrix_out(spi->mosiGpioNum, getSpidOutByHost(spi->host), false, false);
-    gpio_matrix_in(spi->mosiGpioNum, getSpidInByHost(spi->host), false);
+    gpio_matrix_out(spi->mosiGpioNum, s_getSpidOutByHost(spi->host), false, false);
+    gpio_matrix_in(spi->mosiGpioNum, s_getSpidInByHost(spi->host), false);
 
     PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[spi->sckGpioNum], PIN_FUNC_GPIO);
     gpio_set_direction(spi->sckGpioNum, GPIO_MODE_INPUT_OUTPUT);
@@ -257,7 +257,7 @@ static esp_err_t s_myspi_configure_GPIO(spi_internal_t *spi)
     return ESP_OK;
 }
 
-static esp_err_t s_myspi_configure_registers(spi_internal_t *spi) 
+static esp_err_t s_mspi_configure_registers(spi_internal_t *spi) 
 {
 
     //Claim peripheral
@@ -266,7 +266,7 @@ static esp_err_t s_myspi_configure_registers(spi_internal_t *spi)
         return MY_ESP_ERR_SPI_HOST_ALREADY_IN_USE;
     }
 
-    s_myspi_configure_GPIO(spi);
+    s_mspi_configure_GPIO(spi);
 
     //Reset timing
     spi->hw->ctrl2.val           		= 0;
@@ -284,7 +284,7 @@ static esp_err_t s_myspi_configure_registers(spi_internal_t *spi)
     spi->hw->slave.trans_done    		= 0;
 
     //Configure clock
-    s_myspi_configure_clock(spi);
+    s_mspi_configure_clock(spi);
 
     //Configure bit order
     spi->hw->ctrl.rd_bit_order           = 0;    // 0:MSB first. 1:LSB first
@@ -328,7 +328,7 @@ static esp_err_t s_myspi_configure_registers(spi_internal_t *spi)
     //Configure MOSI/MISO
     spi->hw->user.usr_mosi               = 0;        
     spi->hw->user.usr_miso               = 0;
-    spi->hw->mosi_dlen.usr_mosi_dbitlen  = 0;		// works great! (there's no glitch in 5 hours)
+    spi->hw->mosi_dlen.usr_mosi_dbitlen  = 0;
     spi->hw->miso_dlen.usr_miso_dbitlen  = 0;
 
     //Configure duplex mode
@@ -336,8 +336,8 @@ static esp_err_t s_myspi_configure_registers(spi_internal_t *spi)
     spi->hw->user.sio                    = 1;     //3-line half dublex enabled   
 
     //Configure address phase
-    spi->hw->addr                        = 0;    //Address test. Will send MSB first if SPI_WR_BIT_ORDER = 0.
-    spi->hw->user.usr_addr               = 0;   
+    spi->hw->addr                        = 0;
+    spi->hw->user.usr_addr               = 0;
     spi->hw->user1.usr_addr_bitlen       = 0;
     
     //Enable CS0
@@ -352,7 +352,7 @@ static esp_err_t s_myspi_configure_registers(spi_internal_t *spi)
     return ESP_OK;
 }
 
-esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf)
+esp_err_t mspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf)
 {
     const bool dma_chan_claimed = spicommon_dma_chan_claim(spi_internal.dmaChan);
     if(! dma_chan_claimed) {
@@ -360,7 +360,7 @@ esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf)
         return MY_ESP_ERR_SPI_DMA_ALREADY_IN_USE;
     }
 
-    spi_dev_t* spi_hw = myspi_get_hw_for_host(spi_host);
+    spi_dev_t* spi_hw = s_mspi_get_hw_for_host(spi_host);
 
     //Setup DMA descriptors
     spi_internal.descs = (lldesc_t *)calloc(2, sizeof(lldesc_t));
@@ -381,11 +381,8 @@ esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf)
     spi_internal.descs[1].qe.stqe_next    = spi_internal.descs;
     spi_internal.descs[1].buf = (uint8_t *) (buf+1);
 
-    //ESP_LOGI(__func__, "spi_internal.descs[0] address: %p", (void*) spi_internal.descs[0]);
-    //ESP_LOGI(__func__, "spi_internal.descs[1] address: %p", (void*) spi_internal.descs[1]);
-
-    ESP_LOGI(__func__, "DMA buffer 0 address: %p", (void*) spi_internal.descs[0].buf);
-    ESP_LOGI(__func__, "DMA buffer 1 address: %p", (void*) spi_internal.descs[1].buf);
+    //ESP_LOGI(__func__, "DMA buffer 0 address: %p", (void*) spi_internal.descs[0].buf);
+    //ESP_LOGI(__func__, "DMA buffer 1 address: %p", (void*) spi_internal.descs[1].buf);
 
     //Select DMA channel
     DPORT_SET_PERI_REG_BITS(
@@ -409,18 +406,10 @@ esp_err_t myspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf)
     spi_hw->dma_out_link.addr           = 0;
     spi_hw->dma_conf.out_data_burst_en  = 0;
 
-    // Set circular mode
-    //      https://www.esp32.com/viewtopic.php?f=2&t=4011#p18107
-    //      > yes, in SPI DMA mode, SPI will alway transmit and receive
-    //      > data when you set the SPI_DMA_CONTINUE(BIT16) of SPI_DMA_CONF_REG.
-    //spi.hw->dma_conf.dma_tx_stop		= 1;	// Stop SPI DMA
-    //spi.hw->dma_conf.dma_tx_stop		= 0;	// Disable stop
-    //spi->hw->dma_conf.dma_continue       = 1;
-
     return ESP_OK;
 }
 
-esp_err_t myspi_init(my_spi_config_t *my_spi_config)
+esp_err_t mspi_init(my_spi_config_t *my_spi_config)
 {
     esp_err_t ret;
 
@@ -431,28 +420,27 @@ esp_err_t myspi_init(my_spi_config_t *my_spi_config)
     spi_internal.csGpioNum = my_spi_config->csGpioNum;
     spi_internal.clk_speed = my_spi_config->spi_clk;
 
-    spi_internal.hw				= myspi_get_hw_for_host(spi_internal.host);
+    spi_internal.hw				= s_mspi_get_hw_for_host(spi_internal.host);
    
     //Configure SPI registers
-    ret = s_myspi_configure_registers(&spi_internal);
+    ret = s_mspi_configure_registers(&spi_internal);
     if (ret != ESP_OK) {
-        ESP_LOGE(__func__, "s_myspi_configure_registers() returned %d", ret);
+        ESP_LOGE(__func__, "s_mspi_configure_registers() returned %d", ret);
         return ESP_FAIL;
     }
     ESP_LOGI(__func__, "SPI registers configured!");
 
     //Set up interrupt
-    s_myspi_register_interrupt(&spi_internal);
-
+    s_mspi_register_interrupt(&spi_internal);
     //Enable interrupt
     esp_intr_enable(spi_internal.intr);
 
     return ESP_OK;
 }
 
-esp_err_t myspi_deinit(my_spi_config_t *my_spi_config)
+esp_err_t mspi_deinit(my_spi_config_t *my_spi_config)
 {
-	spi_internal.hw = myspi_get_hw_for_host(my_spi_config->host);
+	spi_internal.hw = s_mspi_get_hw_for_host(my_spi_config->host);
 
 	spi_internal.hw->dma_conf.dma_continue	= 0;
 	spi_internal.hw->dma_out_link.start		= 0;
@@ -465,7 +453,7 @@ esp_err_t myspi_deinit(my_spi_config_t *my_spi_config)
 	return ESP_OK;
 }
 
-esp_err_t myspi_start_transfers(void)
+esp_err_t mspi_start_transfers(void)
 {
     //Todo: add init guard
 
@@ -475,7 +463,7 @@ esp_err_t myspi_start_transfers(void)
     return ESP_OK;
 }
 
-esp_err_t myspi_set_addr(uint32_t addr, uint32_t len, bool enable)
+esp_err_t mspi_set_addr(uint32_t addr, uint32_t len, bool enable)
 { 
     //Todo: add init guard
     if(enable)
@@ -495,7 +483,7 @@ esp_err_t myspi_set_addr(uint32_t addr, uint32_t len, bool enable)
     return ESP_OK;
 }
 
-esp_err_t myspi_set_mosi(uint32_t len, bool enable)
+esp_err_t mspi_set_mosi(uint32_t len, bool enable)
 {
     if(enable)
     {
@@ -512,7 +500,7 @@ esp_err_t myspi_set_mosi(uint32_t len, bool enable)
     return ESP_OK;
 }
 
-esp_err_t myspi_set_miso(uint32_t len, bool enable)
+esp_err_t mspi_set_miso(uint32_t len, bool enable)
 {
     if(enable)
     {
@@ -530,11 +518,13 @@ esp_err_t myspi_set_miso(uint32_t len, bool enable)
     return ESP_OK;
 }
 
-esp_err_t myspi_get_dma_data_rx(uint8_t *rxdata, uint32_t len_bytes)
+esp_err_t mspi_get_dma_data_rx(uint8_t *rxdata, uint32_t len_bytes)
 {
 
     //Check register SPI_IN_SUC_EOF_DES_ADDR_REG to get "The last inlink descriptor address when SPI DMA encountered EOF. (RO)"
     //This way, we should be able to get the address of the buffer containing the most recent data.
+
+    //TODO - Check so that we actually have some data received!
 
     uint32_t dma_in_eof_addr_internal;
     uint32_t dma_data_size;
@@ -556,7 +546,7 @@ esp_err_t myspi_get_dma_data_rx(uint8_t *rxdata, uint32_t len_bytes)
 
     for (size_t i = 0; i < dma_data_size; i++)
     {
-        rxdata[i] = *dma_data_buf;
+        rxdata[i] = *(dma_data_buf+i);
     }
     
     return ESP_OK;
