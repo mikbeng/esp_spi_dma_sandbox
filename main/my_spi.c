@@ -16,6 +16,8 @@
 #define out_eof_int_en BIT(7)
 #define spi_trans_done_int BIT(4)
 
+#define MSPI_DEBUG 1 
+
 /* ========================================================================= */
 /* [TYPE] Type definitions                                                   */
 /* ========================================================================= */
@@ -29,8 +31,9 @@ typedef struct {
     spi_dev_t*			    hw;
     lldesc_t*               descs;         //DMA Descriptor
     lldesc_t*               last_inlink_desc_eof;
-    intr_handle_t           intr;           //Interrupt handle for spi 
-    intr_handle_t           intr_dma;       //Interrupt handle for spi dma
+    intr_handle_t           trans_intr;           //Interrupt handle for spi 
+    intr_handle_t           dma_intr;       //Interrupt handle for spi dma
+    uint32_t                *dma_buffer;
     double                  clk_speed;
     int                     dummy_cycle;
 } spi_internal_t;
@@ -42,33 +45,27 @@ typedef struct {
 /* ========================================================================= */
 /* [GLOB] Global variables                                                   */
 /* ========================================================================= */
-spi_internal_t spi_internal;
-int level_dma = 1;
-int level_spi = 1;
+spi_internal_t spi_internal = { 0 };
 volatile int int_cnt = 0;
 volatile uint16_t test1, test2;
 
+static const char * TAG = "mspi";
 	
 /* ========================================================================= */
 /* [PFUN] Private functions implementations                                  */
 /* ========================================================================= */
 
 // This is run in interrupt context.
-static void IRAM_ATTR s_spi_intr_dma(void)
+static void IRAM_ATTR s_spi_dma_intr(void)
 {
     //Temporarily disable interrupt 
-    esp_intr_disable(spi_internal.intr_dma);
+    esp_intr_disable(spi_internal.dma_intr);
 
     uint32_t spi_intr_status;
     uint32_t spi_intr_raw;
 
-    spi_intr_raw = spi_internal.hw->dma_int_raw.val;
-
-    spi_intr_status = spi_internal.hw->dma_int_st.val; //Read interrupt status
-
-    //GPIO debug pin
-    gpio_set_level(GPIO_NUM_4, level_dma);
-    level_dma ^= 1;
+    spi_intr_raw = spi_internal.hw->dma_int_raw.val;    //Read raw interrupt bits
+    spi_intr_status = spi_internal.hw->dma_int_st.val;  //Read interrupt status bits
 
     //Debug prints
     //ets_printf("DMA INT! spi_intr_status:%d\n", spi_intr_status);
@@ -84,37 +81,23 @@ static void IRAM_ATTR s_spi_intr_dma(void)
     spi_internal.hw->dma_int_clr.val = spi_intr_status;     //Clears the interrupt
 
     //Finally, enable the interrupt
-    esp_intr_enable(spi_internal.intr_dma);
+    esp_intr_enable(spi_internal.dma_intr);
 }
 
 // This is run in interrupt context.
-static void IRAM_ATTR s_spi_intr(void)
+static void IRAM_ATTR s_spi_trans_intr(void)
 {
     //Temporarily disable interrupt 
-    esp_intr_disable(spi_internal.intr);
+    esp_intr_disable(spi_internal.trans_intr);
 
-    uint32_t spi_intr_slave_val;
-
-    //GPIO debug pin
-    gpio_set_level(GPIO_NUM_2, level_spi);
-    level_spi ^= 1;
+    uint32_t spi_intr_slave_val = 0;
 
     spi_intr_slave_val = spi_internal.hw->slave.val; //Read interrupt status
 
-    //ets_printf("SPI INT! spi_intr_slave_val:%d\n", spi_intr_slave_val);
-    //ets_printf("SPI INT! spi_intr_raw:%d\n", spi_intr_raw);
-    
+    //Debug prints
+    //ets_printf("SPI TRANS INT! spi_intr_slave_val:%d\n", spi_intr_slave_val);
+
     if (spi_intr_slave_val & spi_trans_done_int) { 
-
-        /*
-        ets_printf("SPI INT! dma_in_suc_eof_des_addr:0x%x\n", spi_internal.hw->dma_in_suc_eof_des_addr);
-        ets_printf("SPI INT! dma_inlink_dscr:0x%x\n", spi_internal.hw->dma_inlink_dscr);
-        ets_printf("SPI INT! dma_inlink_dscr_bf0:0x%x\n", spi_internal.hw->dma_inlink_dscr_bf0);
-        ets_printf("SPI INT! dma_inlink_dscr_bf1:0x%x\n", spi_internal.hw->dma_inlink_dscr_bf1);
-        */
-
-        //ets_printf("SPI INT! *dma_data_p:0x%x\n", *dma_data_p);
-        //ets_printf("SPI INT! rx_data:0x%x\n", rx_data);
 
         spi_internal.hw->dma_in_link.start          = 1;
 
@@ -124,7 +107,7 @@ static void IRAM_ATTR s_spi_intr(void)
     }
     
     //Finally, enable the interrupt
-    esp_intr_enable(spi_internal.intr);
+    esp_intr_enable(spi_internal.trans_intr);
 }
 
 static spi_dev_t *s_mspi_get_hw_for_host(
@@ -170,25 +153,25 @@ static esp_err_t s_mspi_register_interrupt(spi_internal_t *spi)
     /*
     spi->hw->dma_int_ena.in_suc_eof = 1;
     int flags = ESP_INTR_FLAG_IRAM;
-    ret = esp_intr_alloc(ETS_SPI2_DMA_INTR_SOURCE, flags, &s_spi_intr_dma, NULL, &spi->intr_dma);
+    ret = esp_intr_alloc(ETS_SPI2_DMA_INTR_SOURCE, flags, &s_spi_dma_intr, NULL, &spi->dma_intr);
     if (ret != ESP_OK) {
-        ESP_LOGE(__func__, "esp_intr_alloc() returned %d", ret);
+        ESP_LOGE(TAG, "esp_intr_alloc() returned %d", ret);
     }
-    //esp_intr_enable(spi.intr);
-    int int_cpu = esp_intr_get_cpu(spi->intr_dma);
-    ESP_LOGI(__func__, "Allocated interrupt on cpu %d", int_cpu);
+    //esp_intr_enable(spi.trans_intr);
+    int int_cpu = esp_intr_get_cpu(spi->dma_intr);
+    ESP_LOGI(TAG, "Allocated interrupt on cpu %d", int_cpu);
     */
 
     //SPI interrupt
     spi->hw->slave.trans_inten = 1;
-    int flags = ESP_INTR_FLAG_IRAM;
-    ret = esp_intr_alloc(ETS_SPI2_INTR_SOURCE, flags, &s_spi_intr, NULL, &spi->intr);
+    int flags = ESP_INTR_FLAG_IRAM | ESP_INTR_FLAG_INTRDISABLED;
+    ret = esp_intr_alloc(ETS_SPI2_INTR_SOURCE, flags, &s_spi_trans_intr, NULL, &spi->trans_intr);
     if (ret != ESP_OK) {
-        ESP_LOGE(__func__, "esp_intr_alloc() returned %d", ret);
+        ESP_LOGE(TAG, "esp_intr_alloc() returned %d", ret);
         return ESP_FAIL;
     }
-    int int_cpu = esp_intr_get_cpu(spi->intr);
-    ESP_LOGI(__func__, "Allocated interrupt ETS_SPI2_INTR_SOURCE on cpu %d", int_cpu);
+    int int_cpu = esp_intr_get_cpu(spi->trans_intr);
+    ESP_LOGI(TAG, "Allocated interrupt ETS_SPI2_INTR_SOURCE on cpu %d", int_cpu);
 
     return ESP_OK;
 }
@@ -344,15 +327,15 @@ static esp_err_t s_mspi_configure_registers(spi_internal_t *spi)
     spi->hw->pin.cs0_dis = 0;     
 
     //CS hold & setup time
-    spi->hw->user.cs_hold = 1;
-    spi->hw->ctrl2.hold_time = 3;
-    spi->hw->user.cs_setup               = 1;
-    spi->hw->ctrl2.setup_time            = 3;
+    spi->hw->user.cs_hold               = 1;
+    spi->hw->ctrl2.hold_time            = 3;
+    spi->hw->user.cs_setup              = 1;
+    spi->hw->ctrl2.setup_time           = 3;
 
     return ESP_OK;
 }
 
-esp_err_t mspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf)
+esp_err_t mspi_DMA_init(spi_host_device_t spi_host, mspi_dma_config_t dma_config)
 {
     const bool dma_chan_claimed = spicommon_dma_chan_claim(spi_internal.dmaChan);
     if(! dma_chan_claimed) {
@@ -362,15 +345,39 @@ esp_err_t mspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf)
 
     spi_dev_t* spi_hw = s_mspi_get_hw_for_host(spi_host);
 
+    //Set up DMA buffer
+    uint16_t len_word = 10;
+    uint16_t len_bytes = sizeof(uint32_t) * len_word;
+
+    ESP_LOGD(TAG, "Allocating DMA buffer with %d bytes", len_bytes);
+    spi_internal.dma_buffer = (uint32_t *)heap_caps_malloc(len_bytes, MALLOC_CAP_DMA);       	//For DMA
+
+    ESP_LOGD(TAG, "Successfully allocated spi_buffer on address: %p",spi_internal.dma_buffer);
+
     //Setup DMA descriptors
-    spi_internal.descs = (lldesc_t *)calloc(2, sizeof(lldesc_t));
+    spi_internal.descs = (lldesc_t *)calloc(dma_config.list_num, sizeof(lldesc_t));
 
-    ESP_LOGI(__func__, "Allocated memory for DMA desc. spi_internal.descs[0] address: %p", (void*) spi_internal.descs);
+    //See the spicommon_setup_dma_desc_links() function in spi_common.c for insperation
 
+    for (size_t i = 0; i < dma_config.list_num; i++)
+    {
+        spi_internal.descs[i].owner = 1;
+        spi_internal.descs[i].eof = 1;      //Hard-coded to 1 for now. This makes the SPI_IN_SUC_EOF_DES_ADDR_REG updated at each dma transfer
+        spi_internal.descs[i].length = dma_config.dma_trans_len;   
+        spi_internal.descs[i].size = 4;     //Size must be word-aligned
+        spi_internal.descs[i].qe.stqe_next = spi_internal.descs+1;
+        spi_internal.descs[i].buf = (uint8_t *) buf;
+    }
+
+    //Configure inlink descriptor
+    spi_hw->dma_in_link.addr            = (int)(spi_internal.descs) & 0xFFFFF;
+    spi_hw->dma_conf.indscr_burst_en    = 1;
+
+/*
     spi_internal.descs[0].owner = 1;
-    spi_internal.descs[0].eof = 1;
-    spi_internal.descs[0].length = 2;
-    spi_internal.descs[0].size = 4;     //Size must be word-aligned?
+    spi_internal.descs[0].eof = 1;      //Hard-coded to 1 for now. This makes the SPI_IN_SUC_EOF_DES_ADDR_REG updated at each dma transfer
+    spi_internal.descs[0].length = 2;   
+    spi_internal.descs[0].size = 4;     //Size must be word-aligned
     spi_internal.descs[0].qe.stqe_next = spi_internal.descs+1;
     spi_internal.descs[0].buf = (uint8_t *) buf;
 
@@ -380,9 +387,9 @@ esp_err_t mspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf)
     spi_internal.descs[1].size = 4;
     spi_internal.descs[1].qe.stqe_next    = spi_internal.descs;
     spi_internal.descs[1].buf = (uint8_t *) (buf+1);
-
-    //ESP_LOGI(__func__, "DMA buffer 0 address: %p", (void*) spi_internal.descs[0].buf);
-    //ESP_LOGI(__func__, "DMA buffer 1 address: %p", (void*) spi_internal.descs[1].buf);
+*/
+    //ESP_LOGI(TAG, "DMA buffer 0 address: %p", (void*) spi_internal.descs[0].buf);
+    //ESP_LOGI(TAG, "DMA buffer 1 address: %p", (void*) spi_internal.descs[1].buf);
 
     //Select DMA channel
     DPORT_SET_PERI_REG_BITS(
@@ -397,10 +404,6 @@ esp_err_t mspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf)
     spi_hw->dma_out_link.start  		= 0;
     spi_hw->dma_in_link.start   		= 0;
     spi_hw->dma_conf.val        		&= ~(SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST);
-
-    //Configure inlink descriptor
-    spi_hw->dma_in_link.addr            = (int)(spi_internal.descs) & 0xFFFFF;
-    spi_hw->dma_conf.indscr_burst_en    = 1;
 
     //Configure outlink descriptor
     spi_hw->dma_out_link.addr           = 0;
@@ -425,15 +428,15 @@ esp_err_t mspi_init(my_spi_config_t *my_spi_config)
     //Configure SPI registers
     ret = s_mspi_configure_registers(&spi_internal);
     if (ret != ESP_OK) {
-        ESP_LOGE(__func__, "s_mspi_configure_registers() returned %d", ret);
+        ESP_LOGE(TAG, "s_mspi_configure_registers() returned %d", ret);
         return ESP_FAIL;
     }
-    ESP_LOGI(__func__, "SPI registers configured!");
+    ESP_LOGI(TAG, "SPI registers configured!");
 
     //Set up interrupt
     s_mspi_register_interrupt(&spi_internal);
     //Enable interrupt
-    esp_intr_enable(spi_internal.intr);
+    esp_intr_enable(spi_internal.trans_intr);
 
     return ESP_OK;
 }
@@ -453,11 +456,10 @@ esp_err_t mspi_deinit(my_spi_config_t *my_spi_config)
 	return ESP_OK;
 }
 
-esp_err_t mspi_start_transfers(void)
+esp_err_t mspi_start_continous_DMA_rx(void)
 {
     //Todo: add init guard
 
-    //spi_internal.hw->dma_out_link.start		= 1;	// Start SPI DMA transfer (1)
     spi_internal.hw->dma_in_link.start          = 1;
     spi_internal.hw->cmd.usr					= 1;	// SPI: Start SPI DMA transfer
     return ESP_OK;

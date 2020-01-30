@@ -21,21 +21,32 @@ extern "C" {
 #define PIN_NUM_CLK  18
 #define PIN_NUM_CS   27
 
+
+typedef struct
+{
+    int				dmaChan;		// 0 for no DMA, 1 or 2 for DMA
+    uint32_t        list_num;        //Number of linked lists to use (=number of buffers to use) 
+    uint32_t        buf_size;       //Size of each buffer  
+    uint32_t        dma_trans_len;  //The number of bytes actually written by DMA into each buffer.
+                        
+}mspi_dma_config_t;
+
 typedef struct
 {
     spi_host_device_t	host;			// HSPI_HOST or VSPI_HOST
-    int					dmaChan;		// 0, 1 or 2
     gpio_num_t			mosiGpioNum;	// GPIO MOSI
     gpio_num_t			sckGpioNum;	    // GPIO SCK
     gpio_num_t			csGpioNum;	    // GPIO CS
-    double              spi_clk         //SPI clock speed in Hz
-}my_spi_config_t;
+    double              spi_clk;        //SPI clock speed in Hz
+    mspi_dma_config_t   dma_conf;       //DMA config
+}mspi_config_t;
 
 
-esp_err_t mspi_init(my_spi_config_t *my_spi_config);
-esp_err_t mspi_DMA_init(spi_host_device_t spi_host, int dma_ch, uint32_t *buf);
-esp_err_t mspi_deinit(my_spi_config_t *my_spi_config);
-esp_err_t mspi_start_transfers(void);
+
+esp_err_t mspi_init(mspi_config_t *my_spi_config);
+esp_err_t mspi_DMA_init(spi_host_device_t spi_host, mspi_dma_config_t dma_config);
+esp_err_t mspi_deinit(mspi_config_t *my_spi_config);
+esp_err_t mspi_start_continous_DMA_rx(void);
 
 esp_err_t mspi_set_addr(uint32_t addr, uint32_t len, bool enable);
 esp_err_t mspi_set_mosi(uint32_t len, bool enable);

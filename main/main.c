@@ -16,14 +16,12 @@
 #include <soc/spi_reg.h>
 #include <driver/spi_common.h>
 #include <driver/spi_master.h>
-#include "my_spi.h"k
-
-uint32_t *spi_rx_buf;
+#include "my_spi.h"
 
 void app_main()
 {
     esp_err_t ret;
-    my_spi_config_t my_spi_config;
+    mspi_config_t mspi_config;
 
     uint16_t revol_reg;
     int8_t rev;
@@ -42,25 +40,21 @@ void app_main()
 
 
     //Init mspi
-    my_spi_config.host			= HSPI_HOST;
-    my_spi_config.dmaChan		= 1;
-    my_spi_config.mosiGpioNum	= PIN_NUM_MOSI;
-    my_spi_config.sckGpioNum    = PIN_NUM_CLK;
-    my_spi_config.csGpioNum     = PIN_NUM_CS;
-    my_spi_config.spi_clk       = 1000000;  //8Mhz
+    mspi_config.host			= HSPI_HOST;
+    mspi_config.mosiGpioNum	    = PIN_NUM_MOSI;
+    mspi_config.sckGpioNum      = PIN_NUM_CLK;
+    mspi_config.csGpioNum       = PIN_NUM_CS;
+    mspi_config.spi_clk         = 1000000;  //8Mhz
     
-    mspi_init(&my_spi_config);
+    mspi_init(&mspi_config);
 
-    //Set up tx buffer
-    uint16_t len_word = 10;
-    uint16_t len_bytes = sizeof(uint32_t) * len_word;
+    //Init DMA
+    mspi_config.dma_conf.dmaChan    = 1;
+    mspi_config.dma_conf.list_num   = 2;
+    mspi_config.dma_conf.dma_trans_len = 2; //2 bytes
+    mspi_config.dma_conf.buf_size   =
 
-    ESP_LOGI(__func__, "Allocating tx buffer with %d bytes", len_bytes);
-    spi_rx_buf = (uint32_t *)heap_caps_malloc(len_bytes, MALLOC_CAP_DMA);       	//For DMA
-
-    ESP_LOGI(__func__, "Successfully allocates spi_buffer on address: %p",spi_rx_buf);
-
-    mspi_DMA_init(my_spi_config.host, my_spi_config.dmaChan, spi_rx_buf);
+    mspi_DMA_init(mspi_config.host, mspi_config.dma_conf);
 
     //prep command word
     uint8_t TLE5012B_cmd_RW = 1;		//read operation
@@ -80,7 +74,7 @@ void app_main()
     mspi_set_miso(16,1);
 
     //Kick off transfers
-    mspi_start_transfers();
+    mspi_start_continous_DMA_rx();
 
     while(1)
     { 
