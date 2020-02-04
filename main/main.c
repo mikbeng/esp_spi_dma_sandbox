@@ -28,6 +28,7 @@ void app_main()
     uint16_t revol_reg;
     int8_t rev;
     uint8_t rx_data[4] = {0};
+    uint32_t rx_length = 0;
 
     ESP_LOGI(__func__, "SPI EXPERIMENT DMA started");
 
@@ -82,7 +83,7 @@ void app_main()
     { 
         vTaskDelay(1000 / portTICK_PERIOD_MS);
 
-        mspi_get_dma_data_rx(&rx_data, 2, mspi_handle);
+        mspi_get_dma_data_rx(&rx_data, &rx_length, mspi_handle);
         revol_reg = ((uint16_t)(rx_data[0]) << 8) | ((uint16_t)rx_data[1]);
         rev = (int8_t)(revol_reg & 0x01FF);
 

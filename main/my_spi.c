@@ -447,6 +447,7 @@ esp_err_t mspi_init(mspi_config_t *mspi_config, mspi_device_handle_t* handle)
     //Enable interrupt
     esp_intr_enable(spi_internal[host].trans_intr);
 
+    spi_internal[host].initiated = true;
     *handle = &spi_internal[host];
 
     return ESP_OK;
@@ -458,6 +459,8 @@ esp_err_t mspi_deinit(mspi_device_handle_t handle)
 	handle->hw->dma_out_link.start		= 0;
 	handle->hw->cmd.usr					= 0;
 
+    esp_intr_free(handle->trans_intr);
+
 	// TODO : Reset GPIO Matrix
 	spicommon_periph_free(handle->host);
 	return ESP_OK;
@@ -465,7 +468,14 @@ esp_err_t mspi_deinit(mspi_device_handle_t handle)
 
 esp_err_t mspi_start_continous_DMA_rx(mspi_device_handle_t handle)
 {
-    //Todo: add init guard
+    if(handle->initiated == false){
+        ESP_LOGE(TAG, "mspi not initiated! Init first");
+        return ESP_FAIL;    
+    }
+    if(handle->dmaChan == 0){
+        ESP_LOGE(TAG, "DMA not used! Init DMA first with channel 1 or 2");
+        return ESP_FAIL;
+    }
     
     handle->hw->dma_in_link.start       = 1;
     handle->hw->cmd.usr					= 1;	// SPI: Start SPI DMA transfer
@@ -474,7 +484,11 @@ esp_err_t mspi_start_continous_DMA_rx(mspi_device_handle_t handle)
 
 esp_err_t mspi_set_addr(uint32_t addr, uint32_t len, bool enable, mspi_device_handle_t handle)
 { 
-    //Todo: add init guard
+    if(handle->initiated == false){
+        ESP_LOGE(TAG, "mspi not initiated! Init first");
+        return ESP_FAIL;    
+    }
+
     if(enable)
     {
         //Configure address phase
@@ -494,6 +508,10 @@ esp_err_t mspi_set_addr(uint32_t addr, uint32_t len, bool enable, mspi_device_ha
 
 esp_err_t mspi_set_mosi(uint32_t len, bool enable, mspi_device_handle_t handle)
 {
+    if(handle->initiated == false){
+        ESP_LOGE(TAG, "mspi not initiated! Init first");
+        return ESP_FAIL;    
+    }
     if(enable)
     {
         //Configure MOSI
@@ -511,6 +529,10 @@ esp_err_t mspi_set_mosi(uint32_t len, bool enable, mspi_device_handle_t handle)
 
 esp_err_t mspi_set_miso(uint32_t len, bool enable, mspi_device_handle_t handle)
 {
+    if(handle->initiated == false){
+        ESP_LOGE(TAG, "mspi not initiated! Init first");
+        return ESP_FAIL;    
+    }
     if(enable)
     {
         //Configure MISO
@@ -527,8 +549,16 @@ esp_err_t mspi_set_miso(uint32_t len, bool enable, mspi_device_handle_t handle)
     return ESP_OK;
 }
 
-esp_err_t mspi_get_dma_data_rx(uint8_t *rxdata, uint32_t len_bytes, mspi_device_handle_t handle)
+esp_err_t mspi_get_dma_data_rx(uint8_t *rxdata, uint32_t *rx_len_bytes, mspi_device_handle_t handle)
 {
+    if(handle->initiated == false){
+        ESP_LOGE(TAG, "mspi not initiated! Init first");
+        return ESP_FAIL;    
+    }
+    if(handle->dmaChan == 0){
+        ESP_LOGE(TAG, "DMA not used! Init DMA first with channel 1 or 2");
+        return ESP_FAIL;
+    }
     //Check register SPI_IN_SUC_EOF_DES_ADDR_REG to get "The last inlink descriptor address when SPI DMA encountered EOF. (RO)"
     //This way, we should be able to get the address of the buffer containing the most recent data.
 
@@ -540,7 +570,6 @@ esp_err_t mspi_get_dma_data_rx(uint8_t *rxdata, uint32_t len_bytes, mspi_device_
     uint8_t *dma_data_buf;
 
     //Get the last inlink descriptor address when SPI DMA encountered EOF
-    //Todo - make atomic atomic_load()
     dma_in_eof_addr_internal = handle->hw->dma_in_suc_eof_des_addr;
     
     //Assign pointer to the address
@@ -550,8 +579,7 @@ esp_err_t mspi_get_dma_data_rx(uint8_t *rxdata, uint32_t len_bytes, mspi_device_
     dma_data_buf = last_inlink_desc_eof->buf;
     dma_data_size = last_inlink_desc_eof->length;
 
-    //argument len is not really needed? Since we have the dma_data_size?
-    //We could compare them as sanity check..
+    *rx_len_bytes = dma_data_size;
 
     for (size_t i = 0; i < dma_data_size; i++)
     {
