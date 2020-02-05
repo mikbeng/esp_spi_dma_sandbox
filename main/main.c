@@ -77,7 +77,7 @@ void app_main()
     mspi_set_miso(16,1, mspi_handle);
 
     //Kick off transfers
-    mspi_start_continous_DMA_rx(mspi_handle);
+    mspi_start_continuous_DMA_rx(mspi_handle);
 
     while(1)
     { 
@@ -89,5 +89,11 @@ void app_main()
 
         ESP_LOGI(__func__, "revol_reg: %d ", revol_reg);
         ESP_LOGI(__func__, "rev: %d ", rev);
+
+        mspi_stop_continuous_DMA_rx(mspi_handle);
+
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+
+        mspi_start_continuous_DMA_rx(mspi_handle);
     }
 }

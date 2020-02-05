@@ -29,7 +29,7 @@
 /* ========================================================================= */
 /* [GLOB] Global variables                                                   */
 /* ========================================================================= */
-spi_internal_t spi_internal[3] = { 0 };
+static spi_internal_t spi_internal[3] = { 0 };
 
 //Debug variables
 volatile int int_cnt = 0;
@@ -88,10 +88,15 @@ static void IRAM_ATTR s_spi_trans_intr(void *arg)
 
     if (spi_intr_slave_val & spi_trans_done_int) { 
 
-        spi_internal_p->hw->dma_in_link.start          = 1;
+        //Start new transfer if continuous mode active
+        if(spi_internal_p->transfer_cont){
+            spi_internal_p->hw->dma_in_link.start = 1;
+            spi_internal_p->hw->cmd.usr = 1;	            // SPI: Start new SPI transfer
+        }
+        else{
+            spi_internal_p->transfer_done = 1;
+        }
 
-        //Start new transfer
-        spi_internal_p->hw->cmd.usr = 1;	            // SPI: Start new SPI transfer
         spi_internal_p->hw->slave.trans_done = 0;      //Clears the interrupt
     }
     
@@ -172,6 +177,9 @@ static esp_err_t s_mspi_register_interrupt(spi_internal_t *spi)
     */
 
     //SPI interrupt
+
+    spi->hw->slave.trans_done = 0;      //Clear any pending interrupt
+
     spi->hw->slave.trans_inten = 1;
     flags = ESP_INTR_FLAG_IRAM | ESP_INTR_FLAG_INTRDISABLED;
     ret = esp_intr_alloc(spi_int_source, flags, &s_spi_trans_intr, (void*)&spi_internal[spi->host], &spi->trans_intr);
@@ -444,8 +452,6 @@ esp_err_t mspi_init(mspi_config_t *mspi_config, mspi_device_handle_t* handle)
 
     //Set up interrupt
     s_mspi_register_interrupt(&spi_internal[host]);
-    //Enable interrupt
-    esp_intr_enable(spi_internal[host].trans_intr);
 
     spi_internal[host].initiated = true;
     *handle = &spi_internal[host];
@@ -459,6 +465,7 @@ esp_err_t mspi_deinit(mspi_device_handle_t handle)
 	handle->hw->dma_out_link.start		= 0;
 	handle->hw->cmd.usr					= 0;
 
+    esp_intr_disable(handle->trans_intr);
     esp_intr_free(handle->trans_intr);
 
 	// TODO : Reset GPIO Matrix
@@ -466,7 +473,7 @@ esp_err_t mspi_deinit(mspi_device_handle_t handle)
 	return ESP_OK;
 }
 
-esp_err_t mspi_start_continous_DMA_rx(mspi_device_handle_t handle)
+esp_err_t mspi_start_continuous_DMA_rx(mspi_device_handle_t handle)
 {
     if(handle->initiated == false){
         ESP_LOGE(TAG, "mspi not initiated! Init first");
@@ -477,8 +484,44 @@ esp_err_t mspi_start_continous_DMA_rx(mspi_device_handle_t handle)
         return ESP_FAIL;
     }
     
+    handle->transfer_cont               = 1;
     handle->hw->dma_in_link.start       = 1;
     handle->hw->cmd.usr					= 1;	// SPI: Start SPI DMA transfer
+
+    handle->hw->slave.trans_done = 0;      //Clear any pending interrupt
+    esp_intr_enable(handle->trans_intr);
+
+    return ESP_OK;
+}
+
+esp_err_t mspi_stop_continuous_DMA_rx(mspi_device_handle_t handle)
+{
+    if(handle->initiated == false){
+        ESP_LOGE(TAG, "mspi not initiated! Init first");
+        return ESP_FAIL;    
+    }
+    if(handle->dmaChan == 0){
+        ESP_LOGE(TAG, "DMA not used! Init DMA first with channel 1 or 2");
+        return ESP_FAIL;
+    }
+
+    if(handle->transfer_cont == 0){
+        ESP_LOGW(TAG, "mspi_stop_continuous_DMA_rx: Continuous transfers not active. Nothing to be done.");
+        return ESP_OK;
+    }
+    
+    esp_intr_disable(handle->trans_intr);
+
+    handle->transfer_cont               = 0;
+    handle->hw->dma_in_link.stop        = 1;
+    handle->hw->dma_in_link.restart     = 1;
+
+    return ESP_OK;
+}
+
+esp_err_t mspi_device_poll(uint32_t addr, uint32_t len, bool enable, mspi_device_handle_t handle)
+{ 
+    
     return ESP_OK;
 }
 

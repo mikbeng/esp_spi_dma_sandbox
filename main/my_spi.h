@@ -54,7 +54,9 @@ typedef struct {
     uint32_t                *dma_buffer;
     double                  clk_speed;
     int                     dummy_cycle;
-    bool                    initiated;
+    uint32_t                initiated;
+    volatile uint32_t       transfer_cont;
+    volatile uint32_t       transfer_done;
 } spi_internal_t;
 
 typedef spi_internal_t* mspi_device_handle_t;  ///< Handle for a device on a SPI bus
@@ -62,7 +64,8 @@ typedef spi_internal_t* mspi_device_handle_t;  ///< Handle for a device on a SPI
 esp_err_t mspi_init(mspi_config_t *mspi_config, mspi_device_handle_t* handle);
 esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t handle);
 esp_err_t mspi_deinit(mspi_device_handle_t handle);
-esp_err_t mspi_start_continous_DMA_rx(mspi_device_handle_t handle);
+esp_err_t mspi_start_continuous_DMA_rx(mspi_device_handle_t handle);
+esp_err_t mspi_stop_continuous_DMA_rx(mspi_device_handle_t handle);
 
 esp_err_t mspi_set_addr(uint32_t addr, uint32_t len, bool enable, mspi_device_handle_t handle);
 esp_err_t mspi_set_mosi(uint32_t len, bool enable, mspi_device_handle_t handle);
