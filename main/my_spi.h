@@ -56,16 +56,28 @@ typedef struct {
     int                     dummy_cycle;
     uint32_t                initiated;
     volatile uint32_t       transfer_cont;
-    volatile uint32_t       transfer_done;
+    volatile uint32_t       polling_done;
 } spi_internal_t;
+
+typedef struct
+{
+    uint8_t	            *txdata;			// Pointer to transmit buffer, or NULL for no MOSI phase
+    uint8_t			    *rxdata;	        // Pointer to recieve buffer, or NULL for no MISO phase
+    uint32_t 			tx_len;	            // Length of MOSI data in bits, 0 if no MOSI phase
+    uint32_t 			rx_len;	            // Length of MISO data in bits, 0 if no MISO phase
+    uint32_t            addr_len;           // Length of address phase in bits, 0 if no address phase
+    uint32_t            cmd_len;            // Length of cmd phase in bits, 0 if no cmd phase
+    uint32_t            addr;               // Value of transmitting address
+    uint16_t            cmd;                // Value of transmitting command
+}mspi_transaction_t;
 
 typedef spi_internal_t* mspi_device_handle_t;  ///< Handle for a device on a SPI bus
 
 esp_err_t mspi_init(mspi_config_t *mspi_config, mspi_device_handle_t* handle);
 esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t handle);
 esp_err_t mspi_deinit(mspi_device_handle_t handle);
-esp_err_t mspi_start_continuous_DMA_rx(mspi_device_handle_t handle);
-esp_err_t mspi_stop_continuous_DMA_rx(mspi_device_handle_t handle);
+esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle);
+esp_err_t mspi_stop_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle);
 
 esp_err_t mspi_set_addr(uint32_t addr, uint32_t len, bool enable, mspi_device_handle_t handle);
 esp_err_t mspi_set_mosi(uint32_t len, bool enable, mspi_device_handle_t handle);

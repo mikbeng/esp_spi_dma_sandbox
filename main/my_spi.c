@@ -90,12 +90,21 @@ static void IRAM_ATTR s_spi_trans_intr(void *arg)
 
         //Start new transfer if continuous mode active
         if(spi_internal_p->transfer_cont){
-            spi_internal_p->hw->dma_in_link.start = 1;
+
+            //Check if it's rx or tx transfers (MISO or MOSI)
+            if(spi_internal_p->hw->user.usr_mosi == 1){
+                spi_internal_p->hw->dma_out_link.start = 1;
+            }
+            if(spi_internal_p->hw->user.usr_miso == 1){
+                spi_internal_p->hw->dma_in_link.start = 1;
+            }
+            
             spi_internal_p->hw->cmd.usr = 1;	            // SPI: Start new SPI transfer
         }
         else{
-            spi_internal_p->transfer_done = 1;
+            spi_internal_p->polling_done = 1;
         }
+
 
         spi_internal_p->hw->slave.trans_done = 0;      //Clears the interrupt
     }
@@ -351,6 +360,100 @@ static esp_err_t s_mspi_configure_registers(spi_internal_t *spi)
     return ESP_OK;
 }
 
+esp_err_t s_mspi_set_addr(uint32_t addr, uint32_t len, bool enable, spi_internal_t *spi)
+{ 
+    if(spi->initiated == false){
+        ESP_LOGE(TAG, "mspi not initiated! Init first");
+        return ESP_FAIL;    
+    }
+
+    if(enable)
+    {
+        //Configure address phase
+        spi->hw->addr          = (addr << len);    //Address, will send MSB first if SPI_WR_BIT_ORDER = 0.
+        spi->hw->user.usr_addr = 1;                //Enable address phase
+        spi->hw->user1.usr_addr_bitlen = len - 1;
+    }
+    else
+    {
+        
+        spi->hw->addr                        = 0x0;    //Address, will send MSB first if SPI_WR_BIT_ORDER = 0.
+        spi->hw->user.usr_addr = 0;   //Enable address phase
+        spi->hw->user1.usr_addr_bitlen = 0;   
+    }
+    return ESP_OK;
+}
+
+esp_err_t s_mspi_set_cmd(uint16_t cmd, uint32_t len, bool enable, spi_internal_t *spi)
+{ 
+    if(spi->initiated == false){
+        ESP_LOGE(TAG, "mspi not initiated! Init first");
+        return ESP_FAIL;    
+    }
+
+    uint16_t cmd_low, cmd_high;
+    if(enable)
+    {
+        //Configure cmd phase
+        cmd_high = (cmd >> 8);
+        cmd_low = (cmd & 0x00FF);
+        spi->hw->user2.usr_command_value  = (cmd_low << 8) | cmd_high;    /*The value of  command. Output sequence: bit 7-0 and then 15-8.*/
+        spi->hw->user.usr_command         = 1;                           //Enable command phase
+        spi->hw->user2.usr_command_bitlen = len - 1;
+    }
+    else
+    {
+        
+        spi->hw->user2.usr_command_value  = 0;    /*The value of  command. Output sequence: bit 7-0 and then 15-8.*/
+        spi->hw->user.usr_command         = 0;                //Disable command phase
+        spi->hw->user2.usr_command_bitlen = 0;  
+    }
+    return ESP_OK;
+}
+
+esp_err_t s_mspi_set_mosi(uint32_t len, bool enable, spi_internal_t *spi)
+{
+    if(spi->initiated == false){
+        ESP_LOGE(TAG, "mspi not initiated! Init first");
+        return ESP_FAIL;    
+    }
+    if(enable)
+    {
+        //Configure MOSI
+        spi->hw->user.usr_mosi               = 1;        
+        spi->hw->mosi_dlen.usr_mosi_dbitlen  = len-1;
+    }
+    else
+    {
+        spi->hw->user.usr_mosi               = 0;        
+        spi->hw->mosi_dlen.usr_mosi_dbitlen  = 0;
+    }
+    
+    return ESP_OK;
+}
+
+esp_err_t s_mspi_set_miso(uint32_t len, bool enable, spi_internal_t *spi)
+{
+    if(spi->initiated == false){
+        ESP_LOGE(TAG, "mspi not initiated! Init first");
+        return ESP_FAIL;    
+    }
+    if(enable)
+    {
+        //Configure MISO
+        spi->hw->user.usr_miso               = 1;        
+        spi->hw->miso_dlen.usr_miso_dbitlen  = len-1;
+    }
+    else
+    {
+        //Configure MOSI
+        spi->hw->user.usr_miso               = 0;        
+        spi->hw->miso_dlen.usr_miso_dbitlen  = 0;
+    }
+    
+    return ESP_OK;
+}
+
 esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t handle)
 {
     if(mspi_dma_config->dmaChan == 0)
@@ -393,8 +496,8 @@ esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t
     }
 
     //Configure inlink descriptor
-    spi_hw->dma_in_link.addr            = (int)(handle->descs) & 0xFFFFF;
-    spi_hw->dma_conf.indscr_burst_en    = 1;
+    //spi_hw->dma_in_link.addr            = (int)(handle->descs) & 0xFFFFF;
+    //spi_hw->dma_conf.indscr_burst_en    = 1;
 
     //ESP_LOGI(TAG, "DMA buffer 0 address: %p", (void*) spi_internal.descs[0].buf);
     //ESP_LOGI(TAG, "DMA buffer 1 address: %p", (void*) spi_internal.descs[1].buf);
@@ -414,8 +517,8 @@ esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t
     spi_hw->dma_conf.val        		&= ~(SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST);
 
     //Configure outlink descriptor
-    spi_hw->dma_out_link.addr           = 0;
-    spi_hw->dma_conf.out_data_burst_en  = 0;
+    //spi_hw->dma_out_link.addr           = 0;
+    //spi_hw->dma_conf.out_data_burst_en  = 0;
 
     return ESP_OK;
 }
@@ -473,7 +576,7 @@ esp_err_t mspi_deinit(mspi_device_handle_t handle)
 	return ESP_OK;
 }
 
-esp_err_t mspi_start_continuous_DMA_rx(mspi_device_handle_t handle)
+esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle)
 {
     if(handle->initiated == false){
         ESP_LOGE(TAG, "mspi not initiated! Init first");
@@ -484,17 +587,54 @@ esp_err_t mspi_start_continuous_DMA_rx(mspi_device_handle_t handle)
         return ESP_FAIL;
     }
     
-    handle->transfer_cont               = 1;
-    handle->hw->dma_in_link.start       = 1;
+    //Reset miso,mosi and address
+    s_mspi_set_mosi(0,0, handle);
+    s_mspi_set_miso(0,0, handle);
+    s_mspi_set_addr(0,0,0, handle);
+
+    if(mspi_trans_p->addr_len != 0){
+        s_mspi_set_addr(mspi_trans_p->addr, mspi_trans_p->addr_len, 1, handle);
+    }
+    if(mspi_trans_p->cmd_len != 0){
+        s_mspi_set_cmd(mspi_trans_p->cmd, mspi_trans_p->cmd_len, 1, handle);
+    }
+
+    if((mspi_trans_p->tx_len != 0) && (mspi_trans_p->rx_len != 0)){
+        ESP_LOGE(TAG, "DMA rx and tx simultaniously not supported at the moment!");
+        return ESP_FAIL;
+    }
+
+    if(mspi_trans_p->tx_len != 0){
+        //Set up MOSI phase
+        s_mspi_set_mosi(mspi_trans_p->tx_len, 1, handle);
+
+        //Configure outlink descriptor
+        handle->hw->dma_out_link.addr           = (int)(handle->descs) & 0xFFFFF;
+        handle->hw->dma_conf.outdscr_burst_en    = 1;
+        handle->hw->dma_conf.out_data_burst_en  = 0;
+    }
+
+    if(mspi_trans_p->rx_len != 0){
+        //Set up MISO phase
+        s_mspi_set_miso(mspi_trans_p->rx_len, 1, handle);
+
+        //Configure inlink descriptor
+        handle->hw->dma_in_link.addr            = (int)(handle->descs) & 0xFFFFF;
+        handle->hw->dma_conf.indscr_burst_en    = 1;
+        handle->hw->dma_in_link.start           = 1;
+    }
+
+
     handle->hw->cmd.usr					= 1;	// SPI: Start SPI DMA transfer
 
-    handle->hw->slave.trans_done = 0;      //Clear any pending interrupt
+    handle->transfer_cont               = 1;
+    handle->hw->slave.trans_done        = 0;      //Clear any pending interrupt
     esp_intr_enable(handle->trans_intr);
 
     return ESP_OK;
 }
 
-esp_err_t mspi_stop_continuous_DMA_rx(mspi_device_handle_t handle)
+esp_err_t mspi_stop_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle)
 {
     if(handle->initiated == false){
         ESP_LOGE(TAG, "mspi not initiated! Init first");
@@ -519,76 +659,32 @@ esp_err_t mspi_stop_continuous_DMA_rx(mspi_device_handle_t handle)
     return ESP_OK;
 }
 
-esp_err_t mspi_device_poll(uint32_t addr, uint32_t len, bool enable, mspi_device_handle_t handle)
-{ 
-    
-    return ESP_OK;
-}
-
-esp_err_t mspi_set_addr(uint32_t addr, uint32_t len, bool enable, mspi_device_handle_t handle)
+esp_err_t mspi_device_transfer_blocking(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle)
 { 
     if(handle->initiated == false){
         ESP_LOGE(TAG, "mspi not initiated! Init first");
         return ESP_FAIL;    
     }
 
-    if(enable)
-    {
-        //Configure address phase
-        handle->hw->addr          = (addr << len);    //Address test. Will send MSB first if SPI_WR_BIT_ORDER = 0.
-        handle->hw->user.usr_addr = 1;     //Enable address phase
-        handle->hw->user1.usr_addr_bitlen = len - 1;
+    //Check if transfer_cont==1. If so, do not allow any polling since the device is busy.
+    if(handle->transfer_cont == 1){
+        ESP_LOGE(TAG, "Continuous transfers active! Polling not allowed.");
+        return ESP_FAIL;  
     }
-    else
-    {
-        
-        handle->hw->addr                        = 0x0;    //Address test. Will send MSB first if SPI_WR_BIT_ORDER = 0.
-        handle->hw->user.usr_addr = 0;   //Enable address phase
-        handle->hw->user1.usr_addr_bitlen = 0;   
-    }
-    return ESP_OK;
-}
 
-esp_err_t mspi_set_mosi(uint32_t len, bool enable, mspi_device_handle_t handle)
-{
-    if(handle->initiated == false){
-        ESP_LOGE(TAG, "mspi not initiated! Init first");
-        return ESP_FAIL;    
-    }
-    if(enable)
-    {
-        //Configure MOSI
-        handle->hw->user.usr_mosi               = 1;        
-        handle->hw->mosi_dlen.usr_mosi_dbitlen  = len-1;
-    }
-    else
-    {
-        handle->hw->user.usr_mosi               = 0;        
-        handle->hw->mosi_dlen.usr_mosi_dbitlen  = 0;
-    }
-    
-    return ESP_OK;
-}
+    handle->hw->cmd.usr = 1;	            // SPI: Start new SPI transfer
 
-esp_err_t mspi_set_miso(uint32_t len, bool enable, mspi_device_handle_t handle)
-{
-    if(handle->initiated == false){
-        ESP_LOGE(TAG, "mspi not initiated! Init first");
-        return ESP_FAIL;    
+    while(handle->polling_done != 1){
+        vTaskDelay(10 / portTICK_PERIOD_MS);
     }
-    if(enable)
-    {
-        //Configure MISO
-        handle->hw->user.usr_miso               = 1;        
-        handle->hw->miso_dlen.usr_miso_dbitlen  = len-1;
-    }
-    else
-    {
-        //Configure MOSI
-        handle->hw->user.usr_miso               = 0;        
-        handle->hw->miso_dlen.usr_miso_dbitlen  = 0;
-    }
+
     
+
+
+
+
+    handle->polling_done = 0;
+
     return ESP_OK;
 }
 

@@ -30,6 +30,8 @@ void app_main()
     uint8_t rx_data[4] = {0};
     uint32_t rx_length = 0;
 
+    mspi_transaction_t spi_trans;
+
     ESP_LOGI(__func__, "SPI EXPERIMENT DMA started");
 
     //Debug GPIO
@@ -72,12 +74,15 @@ void app_main()
 	uint8_t TLE5012B_cmd_ADDR = address;
 	uint8_t TLE5012B_cmd_ND = 0;				//0x01 for Safety word. 0x00 for no Safety word
     uint16_t cmd = ((TLE5012B_cmd_RW << 15) | (TLE5012B_cmd_LOCK << 11) | (TLE5012B_cmd_UPD << 10) | (TLE5012B_cmd_ADDR << 4) | (TLE5012B_cmd_ND << 0));
+ 
+    //Zero out the transaction
+    memset(&spi_trans, 0, sizeof(spi_trans));       	
 
-    mspi_set_addr(cmd, 16, 1, mspi_handle);  //Command word to TLE5012 in Address phase, will send MSB first if SPI_WR_BIT_ORDER = 0.
-    mspi_set_miso(16,1, mspi_handle);
-
+    spi_trans.addr_len = 16;
+    spi_trans.addr = cmd;
+    spi_trans.rx_len = 16;
     //Kick off transfers
-    mspi_start_continuous_DMA_rx(mspi_handle);
+    mspi_start_continuous_DMA(mspi_handle);
 
     while(1)
     { 
