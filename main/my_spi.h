@@ -3,19 +3,12 @@
 
 #include <driver/spi_common.h>
 #include <driver/spi_master.h>
-#include "my_config.h"
-#include "esp_err.h"
+//#include "my_config.h"
+//#include "esp_err.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#define MY_ESP_ERR_SPI(x)                       MY_ESP_ERR(MY_ESP_ERR_SPI_BASE, (x))
-#define MY_ESP_ERR_SPI_SPI1_IS_NOT_SUPPORTED    MY_ESP_ERR_SPI(1)
-#define MY_ESP_ERR_SPI_INVALID_HOST_NUMBER      MY_ESP_ERR_SPI(2)
-#define MY_ESP_ERR_SPI_INVALID_DMA_CHANNEL      MY_ESP_ERR_SPI(3)
-#define MY_ESP_ERR_SPI_HOST_ALREADY_IN_USE      MY_ESP_ERR_SPI(4)
-#define MY_ESP_ERR_SPI_DMA_ALREADY_IN_USE       MY_ESP_ERR_SPI(5)
 
 #define PIN_NUM_MOSI 5
 #define PIN_NUM_CLK  18
@@ -38,6 +31,7 @@ typedef struct
     gpio_num_t			sckGpioNum;	    // GPIO SCK
     gpio_num_t			csGpioNum;	    // GPIO CS
     double              spi_clk;        //SPI clock speed in Hz
+    int                 dummy_cycle;
 }mspi_config_t;
 
 
@@ -77,7 +71,7 @@ esp_err_t mspi_init(mspi_config_t *mspi_config, mspi_device_handle_t* handle);
 esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t handle);
 esp_err_t mspi_deinit(mspi_device_handle_t handle);
 esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle);
-esp_err_t mspi_stop_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle);
+esp_err_t mspi_stop_continuous_DMA(mspi_device_handle_t handle);
 
 esp_err_t mspi_set_addr(uint32_t addr, uint32_t len, bool enable, mspi_device_handle_t handle);
 esp_err_t mspi_set_mosi(uint32_t len, bool enable, mspi_device_handle_t handle);

@@ -13,7 +13,7 @@
 #include "esp_spi_flash.h"
 #include "esp_log.h"
 
-#include <soc/spi_reg.h>
+#include "string.h"
 #include <driver/spi_common.h>
 #include <driver/spi_master.h>
 #include "my_spi.h"
@@ -49,7 +49,8 @@ void app_main()
     mspi_config.mosiGpioNum	    = PIN_NUM_MOSI;
     mspi_config.sckGpioNum      = PIN_NUM_CLK;
     mspi_config.csGpioNum       = PIN_NUM_CS;
-    mspi_config.spi_clk         = 1000000;  //8Mhz
+    mspi_config.spi_clk         = 8000000;  //8Mhz
+    mspi_config.dummy_cycle     = 3;        //This gives approximatly 200ns dummy phase, which should be enough for twr_delay according to datasheet 
     
     mspi_init(&mspi_config, &mspi_handle);
 
@@ -82,7 +83,7 @@ void app_main()
     spi_trans.addr = cmd;
     spi_trans.rx_len = 16;
     //Kick off transfers
-    mspi_start_continuous_DMA(mspi_handle);
+    mspi_start_continuous_DMA(&spi_trans, mspi_handle);
 
     while(1)
     { 
@@ -95,10 +96,10 @@ void app_main()
         ESP_LOGI(__func__, "revol_reg: %d ", revol_reg);
         ESP_LOGI(__func__, "rev: %d ", rev);
 
-        mspi_stop_continuous_DMA_rx(mspi_handle);
+        mspi_stop_continuous_DMA(mspi_handle);
 
         vTaskDelay(10 / portTICK_PERIOD_MS);
 
-        mspi_start_continuous_DMA_rx(mspi_handle);
+        mspi_start_continuous_DMA(&spi_trans, mspi_handle);
     }
 }

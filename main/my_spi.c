@@ -2,11 +2,14 @@
 /* [INCL] Includes                                                           */
 /* ========================================================================= */
 #include <soc/spi_reg.h>
+#include "soc/spi_struct.h"
 #include <soc/dport_reg.h>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "my_spi.h"
 #include "esp_log.h"
-#include <soc/dport_reg.h>
-#include "soc/spi_struct.h"
+
 
 
 /* ========================================================================= */
@@ -271,7 +274,8 @@ static esp_err_t s_mspi_configure_registers(spi_internal_t *spi)
     //Claim peripheral
     const bool spi_periph_claimed = spicommon_periph_claim(spi->host);
     if(! spi_periph_claimed) {
-        return MY_ESP_ERR_SPI_HOST_ALREADY_IN_USE;
+        ESP_LOGE(TAG, "SPI periph not claimed. Already in use.");
+        return ESP_FAIL;   
     }
 
     s_mspi_configure_GPIO(spi);
@@ -302,17 +306,13 @@ static esp_err_t s_mspi_configure_registers(spi_internal_t *spi)
     spi->hw->user.rd_byte_order          = 1;    //BIG endian
 
     //Configure polarity for mode 1 according to table 27 in tech data sheet p.125
-    spi->hw->pin.ck_idle_edge            = 0;
-    spi->hw->user.ck_out_edge            = 1;
-    spi->hw->ctrl2.miso_delay_mode       = 0;
+    spi->hw->pin.ck_idle_edge            = 0;   //CPOL = 0
+    spi->hw->user.ck_out_edge            = 1;   //CPHA = 1
+    spi->hw->ctrl2.miso_delay_mode       = 0;   
     spi->hw->ctrl2.miso_delay_num        = 0;
     spi->hw->ctrl2.mosi_delay_mode       = 0;
     spi->hw->ctrl2.mosi_delay_num        = 0;
 
-
-    //configure dummy bits
-    spi->hw->user.usr_dummy              = 0;
-    spi->hw->user1.usr_dummy_cyclelen    = 0;
 
     //Set up QIO/DIO if needed
     spi->hw->ctrl.val		&= ~(SPI_FREAD_DUAL|SPI_FREAD_QUAD|SPI_FREAD_DIO|SPI_FREAD_QIO);
@@ -325,9 +325,11 @@ static esp_err_t s_mspi_configure_registers(spi_internal_t *spi)
     if(spi->dummy_cycle <= 0) {
         spi->hw->user.usr_dummy              = 0;
         spi->hw->user1.usr_dummy_cyclelen    = 0;
+        spi->hw->user.usr_dummy_idle         = 0;
     } else {
-        spi->hw->user.usr_dummy              = 1;
-        spi->hw->user1.usr_dummy_cyclelen    = (uint8_t) (spi->dummy_cycle-1);
+        spi->hw->user.usr_dummy              = 1;                               //This bit enables the dummy phase of an SPI operation in SPI half-duplex mode
+        spi->hw->user1.usr_dummy_cyclelen    = (uint8_t) (spi->dummy_cycle-1);  //The number of SPI clock cycles for the dummy phase minus one in SPI half-duplex mode
+        spi->hw->user.usr_dummy_idle         = 1;
     }
 
     spi->hw->user.usr_mosi_highpart      = 0;
@@ -356,6 +358,8 @@ static esp_err_t s_mspi_configure_registers(spi_internal_t *spi)
     spi->hw->ctrl2.hold_time            = 3;
     spi->hw->user.cs_setup              = 1;
     spi->hw->ctrl2.setup_time           = 3;
+
+
 
     return ESP_OK;
 }
@@ -464,7 +468,8 @@ esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t
 
     const bool dma_chan_claimed = spicommon_dma_chan_claim(mspi_dma_config->dmaChan);
     if(! dma_chan_claimed) {
-        return MY_ESP_ERR_SPI_DMA_ALREADY_IN_USE;
+        ESP_LOGE(TAG, "DMA periph not claimed. Already in use.");
+        return ESP_FAIL; 
     }
 
     handle->dmaChan = mspi_dma_config->dmaChan;
@@ -542,6 +547,8 @@ esp_err_t mspi_init(mspi_config_t *mspi_config, mspi_device_handle_t* handle)
     spi_internal[host].sckGpioNum = mspi_config->sckGpioNum;
     spi_internal[host].csGpioNum = mspi_config->csGpioNum;
     spi_internal[host].clk_speed = mspi_config->spi_clk;
+
+    spi_internal[host].dummy_cycle = mspi_config->dummy_cycle;
 
     spi_internal[host].hw				= s_mspi_get_hw_for_host(spi_internal[host].host);
     
@@ -624,7 +631,6 @@ esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_devic
         handle->hw->dma_in_link.start           = 1;
     }
 
-
     handle->hw->cmd.usr					= 1;	// SPI: Start SPI DMA transfer
 
     handle->transfer_cont               = 1;
@@ -634,7 +640,7 @@ esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_devic
     return ESP_OK;
 }
 
-esp_err_t mspi_stop_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle)
+esp_err_t mspi_stop_continuous_DMA(mspi_device_handle_t handle)
 {
     if(handle->initiated == false){
         ESP_LOGE(TAG, "mspi not initiated! Init first");
@@ -715,7 +721,7 @@ esp_err_t mspi_get_dma_data_rx(uint8_t *rxdata, uint32_t *rx_len_bytes, mspi_dev
     last_inlink_desc_eof = (lldesc_t *)dma_in_eof_addr_internal;
     
     //Get the corresponding data buffer pointer
-    dma_data_buf = last_inlink_desc_eof->buf;
+    dma_data_buf = (uint8_t *) last_inlink_desc_eof->buf;
     dma_data_size = last_inlink_desc_eof->length;
 
     *rx_len_bytes = dma_data_size;
