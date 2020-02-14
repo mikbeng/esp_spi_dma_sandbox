@@ -9,6 +9,7 @@
 #include "freertos/task.h"
 #include "my_spi.h"
 #include "esp_log.h"
+#include "string.h"
 
 
 
@@ -35,8 +36,9 @@
 static spi_internal_t spi_internal[3] = { 0 };
 
 //Debug variables
-volatile int int_cnt = 0;
 volatile uint16_t test1, test2;
+volatile uint32_t int_cnt = 0;
+int level = 0;
 
 static const char * TAG = "mspi";
 	
@@ -79,6 +81,7 @@ static void IRAM_ATTR s_spi_dma_intr(void *arg)
 static void IRAM_ATTR s_spi_trans_intr(void *arg)
 {
     spi_internal_t *spi_internal_p = (spi_internal_t *)arg;
+
     //Temporarily disable interrupt 
     esp_intr_disable(spi_internal_p->trans_intr);
 
@@ -111,7 +114,11 @@ static void IRAM_ATTR s_spi_trans_intr(void *arg)
 
         spi_internal_p->hw->slave.trans_done = 0;      //Clears the interrupt
     }
-    
+
+    //GPIO debug pin
+    //level ^= 1;
+    //gpio_set_level(GPIO_NUM_2, level);
+
     //Finally, enable the interrupt
     esp_intr_enable(spi_internal_p->trans_intr);
 }
@@ -496,8 +503,11 @@ esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t
         handle->descs[i].eof = 1;      //Hard-coded to 1 for now. This makes the SPI_IN_SUC_EOF_DES_ADDR_REG updated at each dma transfer
         handle->descs[i].length = mspi_dma_config->dma_trans_len;   
         handle->descs[i].size = mspi_dma_config->list_buf_size;     
-        handle->descs[i].qe.stqe_next = handle->descs+1;
-        handle->descs[i].buf = (uint8_t *) handle->dma_buffer;
+        handle->descs[i].qe.stqe_next = handle->descs+i;
+        handle->descs[i].buf = (uint8_t *) (handle->dma_buffer+i);
+
+        ESP_LOGI(TAG, "DMA desc %d address: %p", i,(void*) &handle->descs[i]);
+        ESP_LOGI(TAG, "DMA buffer %d address: %p", i,(void*) handle->dma_buffer+i);
     }
 
     //Configure inlink descriptor
@@ -617,8 +627,10 @@ esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_devic
 
         //Configure outlink descriptor
         handle->hw->dma_out_link.addr           = (int)(handle->descs) & 0xFFFFF;
-        handle->hw->dma_conf.outdscr_burst_en    = 1;
+        handle->hw->dma_out_link.restart        = 1;
+        handle->hw->dma_conf.outdscr_burst_en   = 1;
         handle->hw->dma_conf.out_data_burst_en  = 0;
+        handle->hw->dma_out_link.start		    = 1;	
     }
 
     if(mspi_trans_p->rx_len != 0){
@@ -627,15 +639,20 @@ esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_devic
 
         //Configure inlink descriptor
         handle->hw->dma_in_link.addr            = (int)(handle->descs) & 0xFFFFF;
+        handle->hw->dma_in_link.restart         = 1;
         handle->hw->dma_conf.indscr_burst_en    = 1;
         handle->hw->dma_in_link.start           = 1;
     }
+    handle->hw->dma_conf.dma_rx_stop		    = 1;	// Stop SPI DMA
+    handle->hw->dma_conf.dma_rx_stop		    = 0;	// Disable stop
 
-    handle->hw->cmd.usr					= 1;	// SPI: Start SPI DMA transfer
+    handle->hw->dma_conf.dma_continue		    = 1;
+    handle->hw->cmd.usr                         = 1;
 
     handle->transfer_cont               = 1;
-    handle->hw->slave.trans_done        = 0;      //Clear any pending interrupt
-    esp_intr_enable(handle->trans_intr);
+
+    //handle->hw->slave.trans_done        = 0;      //Clear any pending interrupt
+    //esp_intr_enable(handle->trans_intr);
 
     return ESP_OK;
 }
@@ -656,11 +673,23 @@ esp_err_t mspi_stop_continuous_DMA(mspi_device_handle_t handle)
         return ESP_OK;
     }
     
-    esp_intr_disable(handle->trans_intr);
+    //esp_intr_disable(handle->trans_intr);
+    handle->hw->cmd.usr                 = 0;
+    handle->hw->dma_conf.dma_rx_stop    = 1;	// Stop SPI DMA
+    handle->hw->dma_conf.dma_continue   = 0;
 
     handle->transfer_cont               = 0;
-    handle->hw->dma_in_link.stop        = 1;
-    handle->hw->dma_in_link.restart     = 1;
+    //handle->hw->dma_in_link.stop        = 1;
+    //handle->hw->dma_in_link.restart     = 1;
+
+    //Reset SPI DMA
+    handle->hw->dma_conf.val        		|= SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST;
+    handle->hw->dma_out_link.start  		= 0;
+    handle->hw->dma_in_link.start   		= 0;
+    handle->hw->dma_conf.val        		&= ~(SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST);
+
+    //reset buffer
+    memset(handle->dma_buffer, 0, 8);
 
     return ESP_OK;
 }
@@ -678,16 +707,35 @@ esp_err_t mspi_device_transfer_blocking(mspi_transaction_t *mspi_trans_p, mspi_d
         return ESP_FAIL;  
     }
 
+    handle->polling_done = 0;
+
     handle->hw->cmd.usr = 1;	            // SPI: Start new SPI transfer
 
     while(handle->polling_done != 1){
         vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 
-    
+    // // The function is called when a transaction is done, in ISR or in the task.
+    // // Fetch the data from FIFO and call the ``post_cb``.
+    // static void SPI_MASTER_ISR_ATTR spi_post_trans(spi_host_t *host)
+    // {
+    //     spi_transaction_t *cur_trans = host->cur_trans_buf.trans;
+    //     if (host->cur_trans_buf.buffer_to_rcv && host->dma_chan == 0 ) {
+    //         //Need to copy from SPI regs to result buffer.
+    //         for (int x = 0; x < cur_trans->rxlength; x += 32) {
+    //             //Do a memcpy to get around possible alignment issues in rx_buffer
+    //             uint32_t word = host->hw->data_buf[x / 32];
+    //             int len = cur_trans->rxlength - x;
+    //             if (len > 32) len = 32;
+    //             memcpy(&host->cur_trans_buf.buffer_to_rcv[x / 32], &word, (len + 7) / 8);
+    //         }
+    //     }
+    //     //Call post-transaction callback, if any
+    //     spi_device_t* dev = atomic_load(&host->device[host->cur_cs]);
+    //     if (dev->cfg.post_cb) dev->cfg.post_cb(cur_trans);
 
-
-
+    //     host->cur_cs = NO_CS;
+    // }
 
     handle->polling_done = 0;
 
@@ -717,12 +765,25 @@ esp_err_t mspi_get_dma_data_rx(uint8_t *rxdata, uint32_t *rx_len_bytes, mspi_dev
     //Get the last inlink descriptor address when SPI DMA encountered EOF
     dma_in_eof_addr_internal = handle->hw->dma_in_suc_eof_des_addr;
     
+    if(dma_in_eof_addr_internal == 0){
+        //No EOF encountered yet.
+        ESP_LOGW(TAG, "No DMA data ready yet");
+        return ESP_OK;
+    }
+
+    level ^= 1;
+    gpio_set_level(GPIO_NUM_2, level);
+
     //Assign pointer to the address
     last_inlink_desc_eof = (lldesc_t *)dma_in_eof_addr_internal;
     
     //Get the corresponding data buffer pointer
     dma_data_buf = (uint8_t *) last_inlink_desc_eof->buf;
     dma_data_size = last_inlink_desc_eof->length;
+
+    ESP_LOGI(TAG, "last_inlink_desc_eof:%p", last_inlink_desc_eof);
+    ESP_LOGI(TAG, "dma_data_buf address:%p. Value:[%d, %d]", dma_data_buf, *dma_data_buf, *(dma_data_buf+1));
+    ESP_LOGI(TAG, "dma_data_size:%d", dma_data_size);
 
     *rx_len_bytes = dma_data_size;
 

@@ -78,7 +78,7 @@ esp_err_t mspi_set_mosi(uint32_t len, bool enable, mspi_device_handle_t handle);
 esp_err_t mspi_set_miso(uint32_t len, bool enable, mspi_device_handle_t handle);
 esp_err_t mspi_get_dma_data_rx(uint8_t *rxdata, uint32_t *rx_len_bytes, mspi_device_handle_t handle);
 
-extern volatile int int_cnt;
+extern volatile uint32_t int_cnt;
 
 #ifdef __cplusplus
 } // extern "C"
