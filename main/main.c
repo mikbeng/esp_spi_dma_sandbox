@@ -35,7 +35,11 @@ static void spi_task(void *arg)
 {
     mspi_config_t mspi_config;
     mspi_dma_config_t mspi_dma_config;
+
     mspi_device_handle_t mspi_handle;
+    mspi_dma_handle_t mspi_dma_handle;
+
+
     mspi_transaction_t spi_trans;
 
     
@@ -62,10 +66,11 @@ static void spi_task(void *arg)
     mspi_init(&mspi_config, &mspi_handle);
 
     //Init DMA
-    mspi_dma_config.dmaChan    = 1;
-    mspi_dma_config.list_num   = 2;         //Number of linked lists to use (=number of buffers to use) 
-    mspi_dma_config.dma_trans_len = 2;      //2 bytes
-    mspi_dma_config.list_buf_size   = 4;    //Size of each buffer in list, must be word-aligned
+    mspi_dma_config.dmaChan    = 1;                 //dma channel 1
+    mspi_dma_config.list_num   = 2;                 //Number of linked lists 2 
+    mspi_dma_config.dma_trans_len = 2;              //2 bytes (16 bits rx data)
+    mspi_dma_config.isrx        = true;             //DMA is set up for rx data
+    mspi_dma_config.linked_list_circular = true;    //Linked list is circular
 
     mspi_DMA_init(&mspi_dma_config, mspi_handle);
 

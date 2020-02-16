@@ -20,8 +20,7 @@
 #define out_eof_int_en BIT(7)
 #define spi_trans_done_int BIT(4)
 
-#define MSPI_DEBUG 1 
-
+#define MSPI_DEBUG_PRINTS 1
 /* ========================================================================= */
 /* [TYPE] Type definitions                                                   */
 /* ========================================================================= */
@@ -52,7 +51,7 @@ static void IRAM_ATTR s_spi_dma_intr(void *arg)
     spi_internal_t *spi_internal_p = (spi_internal_t *)arg;
 
     //Temporarily disable interrupt 
-    esp_intr_disable(spi_internal_p->dma_intr);
+    esp_intr_disable(spi_internal_p->dma_handle.dma_intr);
 
     uint32_t spi_intr_status;
     uint32_t spi_intr_raw;
@@ -74,7 +73,7 @@ static void IRAM_ATTR s_spi_dma_intr(void *arg)
     spi_internal_p->hw->dma_int_clr.val = spi_intr_status;     //Clears the interrupt
 
     //Finally, enable the interrupt
-    esp_intr_enable(spi_internal_p->dma_intr);
+    esp_intr_enable(spi_internal_p->dma_handle.dma_intr);
 }
 
 // This is run in interrupt context.
@@ -479,43 +478,63 @@ esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t
         return ESP_FAIL; 
     }
 
-    handle->dmaChan = mspi_dma_config->dmaChan;
+    handle->dma_handle.dmaChan = mspi_dma_config->dmaChan;
 
-    spi_dev_t* spi_hw = s_mspi_get_hw_for_host(handle->host);
+    uint32_t dmachunklen;
+    if (mspi_dma_config->isrx) {
+        //Receive needs DMA length rounded to next 32-bit boundary
+        dmachunklen = (mspi_dma_config->dma_trans_len + 3) & (~3);
+    } else {
+        dmachunklen = mspi_dma_config->dma_trans_len;
+    }    
 
     //Set up DMA buffer
-    //Total length of buffer is: number of buffers * size of each buffer
-    uint32_t len_bytes = sizeof(uint32_t) * mspi_dma_config->list_buf_size * mspi_dma_config->list_num;
+    handle->dma_handle.buffer_len = dmachunklen * mspi_dma_config->list_num;
+    #if MSPI_DEBUG_PRINTS == 1
+        ESP_LOGI(TAG, "Allocating DMA buffer with %d bytes", handle->dma_handle.buffer_len);
+    #endif
+    
+    handle->dma_handle.dma_buffer = (uint32_t *)heap_caps_malloc(handle->dma_handle.buffer_len, MALLOC_CAP_DMA);       	//For DMA
+    //reset buffer
+    memset(handle->dma_handle.dma_buffer, 0, handle->dma_handle.buffer_len);
 
-    ESP_LOGD(TAG, "Allocating DMA buffer with %d bytes", len_bytes);
-    handle->dma_buffer = (uint32_t *)heap_caps_malloc(len_bytes, MALLOC_CAP_DMA);       	//For DMA
-
-    ESP_LOGD(TAG, "Successfully allocated spi_buffer on address: %p",handle->dma_buffer);
+    #if MSPI_DEBUG_PRINTS == 1
+        ESP_LOGI(TAG, "Successfully allocated spi_buffer on address: %p", handle->dma_handle.dma_buffer);
+    #endif
 
     //Setup DMA descriptors
-    handle->descs = (lldesc_t *)calloc(mspi_dma_config->list_num, sizeof(lldesc_t));
+    handle->dma_handle.descs = (lldesc_t *)calloc(mspi_dma_config->list_num, sizeof(lldesc_t));
 
-    //See the spicommon_setup_dma_desc_links() function in spi_common.c for insperation
+    uint8_t *data = (uint8_t *)handle->dma_handle.dma_buffer;
 
     for (size_t i = 0; i < mspi_dma_config->list_num; i++)
     {
-        handle->descs[i].owner = 1;
-        handle->descs[i].eof = 1;      //Hard-coded to 1 for now. This makes the SPI_IN_SUC_EOF_DES_ADDR_REG updated at each dma transfer
-        handle->descs[i].length = mspi_dma_config->dma_trans_len;   
-        handle->descs[i].size = mspi_dma_config->list_buf_size;     
-        handle->descs[i].qe.stqe_next = handle->descs+i;
-        handle->descs[i].buf = (uint8_t *) (handle->dma_buffer+i);
+        handle->dma_handle.descs[i].owner = 1;
+        handle->dma_handle.descs[i].eof = 1;      //Hard-coded to 1 for now. This makes the SPI_IN_SUC_EOF_DES_ADDR_REG updated at each dma transfer
+        handle->dma_handle.descs[i].sosf = 0; 
+        
+        handle->dma_handle.descs[i].qe.stqe_next = &handle->dma_handle.descs[i+1];
+        handle->dma_handle.descs[i].buf = data;
 
-        ESP_LOGI(TAG, "DMA desc %d address: %p", i,(void*) &handle->descs[i]);
-        ESP_LOGI(TAG, "DMA buffer %d address: %p", i,(void*) handle->dma_buffer+i);
+        #if MSPI_DEBUG_PRINTS == 1
+            ESP_LOGI(TAG, "DMA desc %d address: %p", i,(void*) &handle->dma_handle.descs[i]);
+            ESP_LOGI(TAG, "DMA buffer %d address: %p", i,(void*) &handle->dma_handle.descs[i].buf);
+        #endif
+
+        data += dmachunklen;    //Increment buffer pointer
     }
 
-    //Configure inlink descriptor
-    //spi_hw->dma_in_link.addr            = (int)(handle->descs) & 0xFFFFF;
-    //spi_hw->dma_conf.indscr_burst_en    = 1;
+    handle->dma_handle.descs[mspi_dma_config->list_num - 1].eof = 1;             //Mark last DMA desc as end of stream.
 
-    //ESP_LOGI(TAG, "DMA buffer 0 address: %p", (void*) spi_internal.descs[0].buf);
-    //ESP_LOGI(TAG, "DMA buffer 1 address: %p", (void*) spi_internal.descs[1].buf);
+    if(mspi_dma_config->linked_list_circular)
+    {
+        handle->dma_handle.descs[mspi_dma_config->list_num - 1].qe.stqe_next = &handle->dma_handle.descs[0]; //Point to the first descriptor to get a circular array of descriptors
+    }
+    else
+    {
+        handle->dma_handle.descs[mspi_dma_config->list_num - 1].qe.stqe_next = NULL; //current linked list item is last of list
+    }
+    
 
     //Select DMA channel
     DPORT_SET_PERI_REG_BITS(
@@ -526,23 +545,35 @@ esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t
     );
 
     //Reset SPI DMA
-    spi_hw->dma_conf.val        		|= SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST;
-    spi_hw->dma_out_link.start  		= 0;
-    spi_hw->dma_in_link.start   		= 0;
-    spi_hw->dma_conf.val        		&= ~(SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST);
+    handle->hw->dma_conf.val        		|= SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST;
+    handle->hw->dma_out_link.start  		= 0;
+    handle->hw->dma_in_link.start   		= 0;
+    handle->hw->dma_conf.val        		&= ~(SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST);
 
-    //Configure outlink descriptor
-    //spi_hw->dma_out_link.addr           = 0;
-    //spi_hw->dma_conf.out_data_burst_en  = 0;
+    if(mspi_dma_config->isrx == 0){
+        //Configure outlink descriptor
+        handle->hw->dma_out_link.addr           = (int)(handle->dma_handle.descs) & 0xFFFFF;
+        handle->hw->dma_out_link.restart        = 1;
+        handle->hw->dma_conf.outdscr_burst_en   = 1;
+        handle->hw->dma_conf.out_data_burst_en  = 0;
+        handle->hw->dma_out_link.start		    = 1;	
+    }
+    else
+    {
+        //Configure inlink descriptor
+        handle->hw->dma_in_link.addr            = (int)(handle->dma_handle.descs) & 0xFFFFF; 
+        handle->hw->dma_conf.indscr_burst_en    = 1;
+        handle->hw->dma_in_link.start           = 1;
+    }
 
     return ESP_OK;
 }
 esp_err_t mspi_DMA_deinit(mspi_device_handle_t handle)
 {
-    free(handle->descs);
-    free(handle->dma_buffer);
+    free(handle->dma_handle.descs);
+    free(handle->dma_handle.dma_buffer);
 
-    spicommon_dma_chan_free(handle->dmaChan);
+    spicommon_dma_chan_free(handle->dma_handle.dmaChan);
 
     return ESP_OK;
 }
@@ -571,7 +602,7 @@ esp_err_t mspi_init(mspi_config_t *mspi_config, mspi_device_handle_t* handle)
     ESP_LOGI(TAG, "SPI registers configured!");
 
     //Set up interrupt
-    s_mspi_register_interrupt(&spi_internal[host]);
+    //s_mspi_register_interrupt(&spi_internal[host]);
 
     spi_internal[host].initiated = true;
     *handle = &spi_internal[host];
@@ -599,7 +630,7 @@ esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_devic
         ESP_LOGE(TAG, "mspi not initiated! Init first");
         return ESP_FAIL;    
     }
-    if(handle->dmaChan == 0){
+    if(handle->dma_handle.dmaChan == 0){
         ESP_LOGE(TAG, "DMA not used! Init DMA first with channel 1 or 2");
         return ESP_FAIL;
     }
@@ -624,35 +655,25 @@ esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_devic
     if(mspi_trans_p->tx_len != 0){
         //Set up MOSI phase
         s_mspi_set_mosi(mspi_trans_p->tx_len, 1, handle);
-
-        //Configure outlink descriptor
-        handle->hw->dma_out_link.addr           = (int)(handle->descs) & 0xFFFFF;
-        handle->hw->dma_out_link.restart        = 1;
-        handle->hw->dma_conf.outdscr_burst_en   = 1;
-        handle->hw->dma_conf.out_data_burst_en  = 0;
-        handle->hw->dma_out_link.start		    = 1;	
+        //Reset dma tx
+        handle->hw->dma_conf.dma_tx_stop		    = 1;	// Stop SPI DMA
+        handle->hw->dma_conf.dma_tx_stop		    = 0;	// Disable stop
     }
 
     if(mspi_trans_p->rx_len != 0){
         //Set up MISO phase
         s_mspi_set_miso(mspi_trans_p->rx_len, 1, handle);
-
-        //Configure inlink descriptor
-        handle->hw->dma_in_link.addr            = (int)(handle->descs) & 0xFFFFF;
-        handle->hw->dma_in_link.restart         = 1;
-        handle->hw->dma_conf.indscr_burst_en    = 1;
-        handle->hw->dma_in_link.start           = 1;
+        //Reset dma rx
+        handle->hw->dma_conf.dma_rx_stop		    = 1;	// Stop SPI DMA
+        handle->hw->dma_conf.dma_rx_stop		    = 0;	// Disable stop
     }
-    handle->hw->dma_conf.dma_rx_stop		    = 1;	// Stop SPI DMA
-    handle->hw->dma_conf.dma_rx_stop		    = 0;	// Disable stop
 
+    //Kick off continuous transfers
     handle->hw->dma_conf.dma_continue		    = 1;
     handle->hw->cmd.usr                         = 1;
 
+    //Set internal flag
     handle->transfer_cont               = 1;
-
-    //handle->hw->slave.trans_done        = 0;      //Clear any pending interrupt
-    //esp_intr_enable(handle->trans_intr);
 
     return ESP_OK;
 }
@@ -663,7 +684,7 @@ esp_err_t mspi_stop_continuous_DMA(mspi_device_handle_t handle)
         ESP_LOGE(TAG, "mspi not initiated! Init first");
         return ESP_FAIL;    
     }
-    if(handle->dmaChan == 0){
+    if(handle->dma_handle.dmaChan == 0){
         ESP_LOGE(TAG, "DMA not used! Init DMA first with channel 1 or 2");
         return ESP_FAIL;
     }
@@ -679,7 +700,10 @@ esp_err_t mspi_stop_continuous_DMA(mspi_device_handle_t handle)
     handle->hw->dma_conf.dma_continue   = 0;
 
     handle->transfer_cont               = 0;
-    //handle->hw->dma_in_link.stop        = 1;
+
+    handle->hw->dma_in_link.stop        = 1;
+    handle->hw->dma_out_link.stop        = 1;
+    
     //handle->hw->dma_in_link.restart     = 1;
 
     //Reset SPI DMA
@@ -689,7 +713,7 @@ esp_err_t mspi_stop_continuous_DMA(mspi_device_handle_t handle)
     handle->hw->dma_conf.val        		&= ~(SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST);
 
     //reset buffer
-    memset(handle->dma_buffer, 0, 8);
+    memset(handle->dma_handle.dma_buffer, 0, handle->dma_handle.buffer_len);
 
     return ESP_OK;
 }
@@ -748,7 +772,7 @@ esp_err_t mspi_get_dma_data_rx(uint8_t *rxdata, uint32_t *rx_len_bytes, mspi_dev
         ESP_LOGE(TAG, "mspi not initiated! Init first");
         return ESP_FAIL;    
     }
-    if(handle->dmaChan == 0){
+    if(handle->dma_handle.dmaChan == 0){
         ESP_LOGE(TAG, "DMA not used! Init DMA first with channel 1 or 2");
         return ESP_FAIL;
     }

@@ -17,12 +17,13 @@ extern "C" {
 
 typedef struct
 {
-    int				dmaChan;		// 0 for no DMA, 1 or 2 for DMA
-    uint32_t        list_num;       //Number of linked lists to use (=number of buffers to use) 
-    uint32_t        list_buf_size;   //Size in bytes of each buffer in list, must be word-aligned
-    uint32_t        dma_trans_len;  //The number of bytes actually written by DMA into each buffer.
-                        
+    int				dmaChan;		        // 0 for no DMA, 1 or 2 for DMA
+    uint32_t        list_num;               //Number of linked lists to use (=number of buffers to use) 
+    uint32_t        dma_trans_len;          //The number of bytes actually written by DMA in each transfer (into each buffer). 
+    bool            isrx;                   //True if DMA buffer is used as rx, false otherwise      
+    bool            linked_list_circular;   //True if linked list is to be set up in a circular mode (last descriptor points to first). False otherwise.            
 }mspi_dma_config_t;
+
 
 typedef struct
 {
@@ -34,23 +35,28 @@ typedef struct
     int                 dummy_cycle;
 }mspi_config_t;
 
+typedef struct
+{
+    int			    dmaChan;		// 0, 1 or 2
+    lldesc_t*       descs;         //DMA Descriptors
+    intr_handle_t   dma_intr;       //Interrupt handle for spi dma
+    uint32_t        *dma_buffer;
+    uint32_t             buffer_len;
+}mspi_dma_handle_t;
 
 typedef struct {
     spi_host_device_t	    host;			// HSPI_HOST or VSPI_HOST
-    int					    dmaChan;		// 0, 1 or 2
     gpio_num_t			    mosiGpioNum;	// GPIO MOSI
     gpio_num_t			    sckGpioNum;	    // GPIO SCK
     gpio_num_t			    csGpioNum;	    // GPIO CS
     spi_dev_t*			    hw;
-    lldesc_t*               descs;         //DMA Descriptor
     intr_handle_t           trans_intr;           //Interrupt handle for spi 
-    intr_handle_t           dma_intr;       //Interrupt handle for spi dma
-    uint32_t                *dma_buffer;
     double                  clk_speed;
     int                     dummy_cycle;
     uint32_t                initiated;
     volatile uint32_t       transfer_cont;
     volatile uint32_t       polling_done;
+    mspi_dma_handle_t       dma_handle;
 } spi_internal_t;
 
 typedef struct
