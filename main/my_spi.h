@@ -41,7 +41,7 @@ typedef struct
     lldesc_t*       descs;         //DMA Descriptors
     intr_handle_t   dma_intr;       //Interrupt handle for spi dma
     uint32_t        *dma_buffer;
-    uint32_t             buffer_len;
+    uint32_t         buffer_len;
 }mspi_dma_handle_t;
 
 typedef struct {
@@ -75,6 +75,7 @@ typedef spi_internal_t* mspi_device_handle_t;  ///< Handle for a device on a SPI
 
 esp_err_t mspi_init(mspi_config_t *mspi_config, mspi_device_handle_t* handle);
 esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t handle);
+esp_err_t mspi_DMA_deinit(mspi_device_handle_t handle);
 esp_err_t mspi_deinit(mspi_device_handle_t handle);
 esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle);
 esp_err_t mspi_stop_continuous_DMA(mspi_device_handle_t handle);

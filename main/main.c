@@ -67,7 +67,7 @@ static void spi_task(void *arg)
 
     //Init DMA
     mspi_dma_config.dmaChan    = 1;                 //dma channel 1
-    mspi_dma_config.list_num   = 2;                 //Number of linked lists 2 
+    mspi_dma_config.list_num   = 10;                 //Number of linked lists 2 
     mspi_dma_config.dma_trans_len = 2;              //2 bytes (16 bits rx data)
     mspi_dma_config.isrx        = true;             //DMA is set up for rx data
     mspi_dma_config.linked_list_circular = true;    //Linked list is circular
@@ -97,20 +97,13 @@ static void spi_task(void *arg)
 
     //Kick off transfers
     mspi_start_continuous_DMA(&spi_trans, mspi_handle);
-
+    
     int loop_cnt = 0;
 
     while(1)
     { 
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+        vTaskDelay((100) / portTICK_PERIOD_MS);
 
-        //mspi_stop_continuous_DMA(mspi_handle);
-        //end = esp_timer_get_time();
-        //ESP_LOGI(__func__, "total time us: %lld. total interrupts: %d", end-start, int_cnt);
-
-        // mspi_get_dma_data_rx(&rx_data, &rx_length, mspi_handle);
-        // revol_reg = ((uint16_t)(rx_data[0]) << 8) | ((uint16_t)rx_data[1]);
-        // rev = (int8_t)(revol_reg & 0x01FF);
         
         mspi_get_dma_data_rx(&rx_data, &rx_length, mspi_handle);
         AVAL_reg = ((uint16_t)(rx_data[0]) << 8) | ((uint16_t)rx_data[1]);
@@ -118,19 +111,16 @@ static void spi_task(void *arg)
 
         ESP_LOGI(__func__, "angle: %.2f ", angle);
 
-        //revol_reg = ((uint16_t)(rx_data[0]) << 8) | ((uint16_t)rx_data[1]);
-        //rev = (int8_t)(revol_reg & 0x01FF);
-
-        //ESP_LOGI(__func__, "revol_reg: %d ", revol_reg);
-        //ESP_LOGI(__func__, "rev: %d ", rev);
 
         loop_cnt++;
         if(loop_cnt == 2){
             ESP_LOGI(__func__, "Stopping DMA");
             mspi_stop_continuous_DMA(mspi_handle);
+
             memset(&rx_data,0,sizeof(rx_data));
             vTaskDelay(10 / portTICK_PERIOD_MS);
             ESP_LOGI(__func__, "Starting DMA");
+
             mspi_start_continuous_DMA(&spi_trans, mspi_handle);
             loop_cnt = 0;
         }
