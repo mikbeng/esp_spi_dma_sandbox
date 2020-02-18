@@ -60,7 +60,7 @@ static void spi_task(void *arg)
     mspi_config.mosiGpioNum	    = PIN_NUM_MOSI;
     mspi_config.sckGpioNum      = PIN_NUM_CLK;
     mspi_config.csGpioNum       = PIN_NUM_CS;
-    mspi_config.spi_clk         = 1000000;  //8Mhz
+    mspi_config.spi_clk         = 8000000;  //8Mhz
     mspi_config.dummy_cycle     = 3;        //This gives approximatly 200ns dummy phase, which should be enough for twr_delay according to datasheet 
     
     mspi_init(&mspi_config, &mspi_handle);
@@ -94,6 +94,9 @@ static void spi_task(void *arg)
     spi_trans.addr_len = 16;
     spi_trans.addr = cmd;
     spi_trans.rx_len = 16;
+    spi_trans.rxdata = &rx_data;
+
+    mspi_set_transfer_phases(&spi_trans, mspi_handle);
 
     //Kick off transfers
     mspi_start_continuous_DMA(&spi_trans, mspi_handle);
@@ -102,17 +105,18 @@ static void spi_task(void *arg)
 
     while(1)
     { 
-        vTaskDelay((100) / portTICK_PERIOD_MS);
+        vTaskDelay((10) / portTICK_PERIOD_MS);
 
         
         mspi_get_dma_data_rx(&rx_data, &rx_length, mspi_handle);
-        AVAL_reg = ((uint16_t)(rx_data[0]) << 8) | ((uint16_t)rx_data[1]);
+        mspi_device_transfer_blocking(&spi_trans, mspi_handle);
+        AVAL_reg = ((uint16_t)(spi_trans.rxdata[0]) << 8) | ((uint16_t)spi_trans.rxdata[1]);
         angle = TLE5012B_calc_angle_deg(AVAL_reg);
 
-        ESP_LOGI(__func__, "angle: %.2f ", angle);
+        //ESP_LOGI(__func__, "angle: %.2f ", angle);
 
 
-        loop_cnt++;
+        //loop_cnt++;
         if(loop_cnt == 2){
             ESP_LOGI(__func__, "Stopping DMA");
             mspi_stop_continuous_DMA(mspi_handle);

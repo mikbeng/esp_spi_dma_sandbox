@@ -329,7 +329,7 @@ static esp_err_t s_mspi_configure_registers(spi_internal_t *spi)
     spi->hw->ctrl.wr_bit_order           = 0;    // 0:MSB first. 1:LSB first
 
     spi->hw->user.wr_byte_order          = 1;    //BIG endian
-    spi->hw->user.rd_byte_order          = 1;    //BIG endian
+    spi->hw->user.rd_byte_order          = 0;    //Little endian
 
     //Configure polarity for mode 1 according to table 27 in tech data sheet p.125
     spi->hw->pin.ck_idle_edge            = 0;   //CPOL = 0
@@ -577,14 +577,14 @@ esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t
         handle->hw->dma_out_link.addr           = (int)(handle->dma_handle.descs) & 0xFFFFF;
         handle->hw->dma_conf.outdscr_burst_en   = 1;
         handle->hw->dma_conf.out_data_burst_en  = 0;
-        handle->hw->dma_out_link.start		    = 1;	
+        //handle->hw->dma_out_link.start		    = 1;	
     }
     else
     {
         //Configure inlink descriptor
         handle->hw->dma_in_link.addr            = (int)(handle->dma_handle.descs) & 0xFFFFF; 
         handle->hw->dma_conf.indscr_burst_en    = 1;
-        handle->hw->dma_in_link.start           = 1;
+        //handle->hw->dma_in_link.start           = 1;
     }
 
     //Register any DMA interrupts if needed
@@ -648,17 +648,9 @@ esp_err_t mspi_deinit(mspi_device_handle_t handle)
 	return ESP_OK;
 }
 
-esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle)
+esp_err_t mspi_set_transfer_phases(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle)
 {
-    if(handle->initiated == false){
-        ESP_LOGE(TAG, "mspi not initiated! Init first");
-        return ESP_FAIL;    
-    }
-    if(handle->dma_handle.dmaChan == 0){
-        ESP_LOGE(TAG, "DMA not used! Init DMA first with channel 1 or 2");
-        return ESP_FAIL;
-    }
-    
+
     //Reset miso,mosi and address
     s_mspi_set_mosi(0,0, handle);
     s_mspi_set_miso(0,0, handle);
@@ -671,15 +663,38 @@ esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_devic
         s_mspi_set_cmd(mspi_trans_p->cmd, mspi_trans_p->cmd_len, 1, handle);
     }
 
+    if(mspi_trans_p->tx_len != 0){
+        //Set up MOSI phase
+        s_mspi_set_mosi(mspi_trans_p->tx_len, 1, handle);
+    }
+
+    if(mspi_trans_p->rx_len != 0){
+        //Set up MISO phase
+        s_mspi_set_miso(mspi_trans_p->rx_len, 1, handle);
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle)
+{
+    if(handle->initiated == false){
+        ESP_LOGE(TAG, "mspi not initiated! Init first");
+        return ESP_FAIL;    
+    }
+    if(handle->dma_handle.dmaChan == 0){
+        ESP_LOGE(TAG, "DMA not used! Init DMA first with channel 1 or 2");
+        return ESP_FAIL;
+    }
+
     if((mspi_trans_p->tx_len != 0) && (mspi_trans_p->rx_len != 0)){
         ESP_LOGE(TAG, "DMA rx and tx simultaniously not supported at the moment!");
         return ESP_FAIL;
     }
     
+    mspi_set_transfer_phases(mspi_trans_p, handle);
+
     if(mspi_trans_p->tx_len != 0){
-        //Set up MOSI phase
-        s_mspi_set_mosi(mspi_trans_p->tx_len, 1, handle);
-        
         //Reset dma tx
         handle->hw->dma_conf.dma_tx_stop		    = 1;	// Stop SPI DMA
         handle->hw->dma_conf.dma_tx_stop		    = 0;	// Disable stop
@@ -687,8 +702,6 @@ esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_devic
     }
 
     if(mspi_trans_p->rx_len != 0){
-        //Set up MISO phase
-        s_mspi_set_miso(mspi_trans_p->rx_len, 1, handle);
         handle->hw->dma_in_link.start               = 1;
         //Reset dma rx
         handle->hw->dma_conf.dma_rx_stop		    = 1;	// Stop SPI DMA
@@ -745,7 +758,7 @@ esp_err_t mspi_stop_continuous_DMA(mspi_device_handle_t handle)
     return ESP_OK;
 }
 
-esp_err_t mspi_device_transfer_blocking(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle)
+esp_err_t IRAM_ATTR mspi_device_transfer_blocking(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle)
 { 
     if(handle->initiated == false){
         ESP_LOGE(TAG, "mspi not initiated! Init first");
@@ -779,43 +792,20 @@ esp_err_t mspi_device_transfer_blocking(mspi_transaction_t *mspi_trans_p, mspi_d
 
         int word_len = (mspi_trans_p->rx_len + 31)/32;    //How many uint32 do we need for rx_len.
         int byte_len = (mspi_trans_p->rx_len + 7)/8;      //How many bytes do we need for rx_len.
+        uint8_t *spi_data = (uint8_t *)handle->hw->data_buf;
+        uint8_t *user_data = (uint8_t *)mspi_trans_p->rxdata;
+        
 
-        for (int i = 0; i < word_len; i++)
+        while (byte_len)
         {
-            uint32_t word = handle->hw->data_buf[i];
-            for (int j = 0; j < byte_len; j++)
-            {
-                mspi_trans_p->rxdata[j] = (uint8_t)((word >> (8*j)) & 0xFF);
-            }  
-        }
-          
+            *user_data = *spi_data;
+            byte_len--;
+            user_data++;
+            spi_data++;
+        }    
     }
-    
-
-    // // The function is called when a transaction is done, in ISR or in the task.
-    // // Fetch the data from FIFO and call the ``post_cb``.
-    // static void SPI_MASTER_ISR_ATTR spi_post_trans(spi_host_t *host)
-    // {
-    //     spi_transaction_t *cur_trans = host->cur_trans_buf.trans;
-    //     if (host->cur_trans_buf.buffer_to_rcv && host->dma_chan == 0 ) {
-    //         //Need to copy from SPI regs to result buffer.
-    //         for (int x = 0; x < cur_trans->rxlength; x += 32) {
-    //             //Do a memcpy to get around possible alignment issues in rx_buffer
-    //             uint32_t word = host->hw->data_buf[x / 32];
-    //             int len = cur_trans->rxlength - x;
-    //             if (len > 32) len = 32;
-    //             memcpy(&host->cur_trans_buf.buffer_to_rcv[x / 32], &word, (len + 7) / 8);
-    //         }
-    //     }
-    //     //Call post-transaction callback, if any
-    //     spi_device_t* dev = atomic_load(&host->device[host->cur_cs]);
-    //     if (dev->cfg.post_cb) dev->cfg.post_cb(cur_trans);
-
-    //     host->cur_cs = NO_CS;
-    // }
 
     handle->polling_active = 0;
-
     return ESP_OK;
 }
 
@@ -855,9 +845,9 @@ esp_err_t mspi_get_dma_data_rx(uint8_t *rxdata, uint32_t *rx_len_bytes, mspi_dev
     dma_data_buf = (uint8_t *) last_inlink_desc_eof->buf;
     dma_data_size = last_inlink_desc_eof->length;
 
-    ESP_LOGI(TAG, "last_inlink_desc_eof:%p", last_inlink_desc_eof);
-    ESP_LOGI(TAG, "dma_data_buf address:%p. Value:[0x%02x, 0x%02x]", dma_data_buf, *dma_data_buf, *(dma_data_buf+1));
-    ESP_LOGI(TAG, "dma_data_size:%d", dma_data_size);
+    //ESP_LOGD(TAG, "last_inlink_desc_eof:%p", last_inlink_desc_eof);
+    //ESP_LOGD(TAG, "dma_data_buf address:%p. Value:[0x%02x, 0x%02x]", dma_data_buf, *dma_data_buf, *(dma_data_buf+1));
+    //ESP_LOGD(TAG, "dma_data_size:%d", dma_data_size);
 
     *rx_len_bytes = dma_data_size;
 
