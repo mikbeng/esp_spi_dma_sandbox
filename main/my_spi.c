@@ -22,12 +22,9 @@
 #define SPI_INLINK_DSCR_ERROR_INT BIT(2)
 #define SPI_INLINK_DSCR_EMPTY_INT BIT(0)
 
-
-#define in_suc_eof_int_en BIT(5)
 #define out_eof_int_en BIT(7)
 #define spi_trans_done_int BIT(4)
 
-#define MSPI_DEBUG_PRINTS 1
 /* ========================================================================= */
 /* [TYPE] Type definitions                                                   */
 /* ========================================================================= */
@@ -42,8 +39,6 @@
 static spi_internal_t spi_internal[3] = { 0 };
 
 //Debug variables
-volatile uint16_t test1, test2;
-volatile uint32_t int_cnt = 0;
 int level = 0;
 
 static const char * TAG = "mspi";
@@ -93,16 +88,14 @@ static void IRAM_ATTR s_spi_trans_intr(void *arg)
     //Temporarily disable interrupt 
     esp_intr_disable(spi_internal_p->trans_intr);
 
-    uint32_t spi_intr_slave_val = 0;
-
-    spi_intr_slave_val = spi_internal_p->hw->slave.val; //Read interrupt status
+    uint32_t spi_intr_slave_val = spi_internal_p->hw->slave.val; //Read interrupt status
 
     //Debug prints
     //ets_printf("SPI TRANS INT! spi_intr_slave_val:%d\n", spi_intr_slave_val);
 
     if (spi_intr_slave_val & spi_trans_done_int) { 
 
-        //Start new transfer if continuous mode active
+        // //Start new transfer if continuous mode active
         // if(spi_internal_p->transfer_cont){
 
         //     //Check if it's rx or tx transfers (MISO or MOSI)
@@ -119,6 +112,9 @@ static void IRAM_ATTR s_spi_trans_intr(void *arg)
         //     spi_internal_p->polling_done = 1;
         // }
 
+        if(spi_internal_p->polling_active){
+            spi_internal_p->polling_done = 1;
+        }
 
         spi_internal_p->hw->slave.trans_done = 0;      //Clears the interrupt
     }
@@ -128,7 +124,7 @@ static void IRAM_ATTR s_spi_trans_intr(void *arg)
     //gpio_set_level(GPIO_NUM_2, level);
 
     //Finally, enable the interrupt
-    esp_intr_enable(spi_internal_p->trans_intr);
+    //esp_intr_enable(spi_internal_p->trans_intr);
 }
 
 static spi_dev_t *s_mspi_get_hw_for_host(
@@ -142,8 +138,7 @@ static spi_dev_t *s_mspi_get_hw_for_host(
     }
 }
 
-
-static esp_err_t s_getSpidOutByHost(
+static esp_err_t s_mspi_get_spid_out_for_host(
     spi_host_device_t host
 ) {
     switch(host) {
@@ -155,7 +150,7 @@ static esp_err_t s_getSpidOutByHost(
 }
 
 
-static esp_err_t s_getSpidInByHost(
+static esp_err_t s_mspi_get_spid_in_for_host(
     spi_host_device_t host
 ) {
     switch(host) {
@@ -205,7 +200,7 @@ static esp_err_t s_mspi_register_interrupt_dmatrans(spi_internal_t *spi)
 static esp_err_t s_mspi_register_interrupt_spitrans(spi_internal_t *spi)
 {
     esp_err_t ret;
-    int spi_int_source, dma_int_source;
+    int spi_int_source;
 
     switch (spi->host)
     {
@@ -283,8 +278,8 @@ static esp_err_t s_mspi_configure_GPIO(spi_internal_t *spi)
     //Configure GPIOs for 3-wire half duplex (MOSI,SCK and CS)
     PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[spi->mosiGpioNum], PIN_FUNC_GPIO);
     gpio_set_direction(spi->mosiGpioNum, GPIO_MODE_INPUT_OUTPUT);
-    gpio_matrix_out(spi->mosiGpioNum, s_getSpidOutByHost(spi->host), false, false);
-    gpio_matrix_in(spi->mosiGpioNum, s_getSpidInByHost(spi->host), false);
+    gpio_matrix_out(spi->mosiGpioNum, s_mspi_get_spid_out_for_host(spi->host), false, false);
+    gpio_matrix_in(spi->mosiGpioNum, s_mspi_get_spid_in_for_host(spi->host), false);
 
     PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[spi->sckGpioNum], PIN_FUNC_GPIO);
     gpio_set_direction(spi->sckGpioNum, GPIO_MODE_INPUT_OUTPUT);
@@ -395,7 +390,7 @@ static esp_err_t s_mspi_configure_registers(spi_internal_t *spi)
     return ESP_OK;
 }
 
-esp_err_t s_mspi_set_addr(uint32_t addr, uint32_t len, bool enable, spi_internal_t *spi)
+static esp_err_t s_mspi_set_addr(uint32_t addr, uint32_t len, bool enable, spi_internal_t *spi)
 { 
     if(spi->initiated == false){
         ESP_LOGE(TAG, "mspi not initiated! Init first");
@@ -419,7 +414,7 @@ esp_err_t s_mspi_set_addr(uint32_t addr, uint32_t len, bool enable, spi_internal
     return ESP_OK;
 }
 
-esp_err_t s_mspi_set_cmd(uint16_t cmd, uint32_t len, bool enable, spi_internal_t *spi)
+static esp_err_t s_mspi_set_cmd(uint16_t cmd, uint32_t len, bool enable, spi_internal_t *spi)
 { 
     if(spi->initiated == false){
         ESP_LOGE(TAG, "mspi not initiated! Init first");
@@ -446,7 +441,7 @@ esp_err_t s_mspi_set_cmd(uint16_t cmd, uint32_t len, bool enable, spi_internal_t
     return ESP_OK;
 }
 
-esp_err_t s_mspi_set_mosi(uint32_t len, bool enable, spi_internal_t *spi)
+static esp_err_t s_mspi_set_mosi(uint32_t len, bool enable, spi_internal_t *spi)
 {
     if(spi->initiated == false){
         ESP_LOGE(TAG, "mspi not initiated! Init first");
@@ -467,7 +462,7 @@ esp_err_t s_mspi_set_mosi(uint32_t len, bool enable, spi_internal_t *spi)
     return ESP_OK;
 }
 
-esp_err_t s_mspi_set_miso(uint32_t len, bool enable, spi_internal_t *spi)
+static esp_err_t s_mspi_set_miso(uint32_t len, bool enable, spi_internal_t *spi)
 {
     if(spi->initiated == false){
         ESP_LOGE(TAG, "mspi not initiated! Init first");
@@ -489,6 +484,10 @@ esp_err_t s_mspi_set_miso(uint32_t len, bool enable, spi_internal_t *spi)
     return ESP_OK;
 }
 
+/* ========================================================================= */
+/* [FUNC] Functions implementations                                          */
+/* ========================================================================= */
+
 esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t handle)
 {
     if(mspi_dma_config->dmaChan == 0)
@@ -497,6 +496,8 @@ esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t
         return ESP_OK;
     }
 
+
+    //Claim the DMA Peripheral
     const bool dma_chan_claimed = spicommon_dma_chan_claim(mspi_dma_config->dmaChan);
     if(! dma_chan_claimed) {
         ESP_LOGE(TAG, "DMA periph not claimed. Already in use.");
@@ -513,6 +514,7 @@ esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t
 
     handle->dma_handle.dmaChan = mspi_dma_config->dmaChan;
 
+    //Calculate the DMA transfer length
     uint32_t dmachunklen;
     if (mspi_dma_config->isrx) {
         //Receive needs DMA length rounded to next 32-bit boundary
@@ -523,21 +525,16 @@ esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t
 
     //Set up DMA buffer
     handle->dma_handle.buffer_len = dmachunklen * mspi_dma_config->list_num;
-    #if MSPI_DEBUG_PRINTS == 1
-        ESP_LOGI(TAG, "Allocating DMA buffer with %d bytes", handle->dma_handle.buffer_len);
-    #endif
-    
-    handle->dma_handle.dma_buffer = (uint32_t *)heap_caps_malloc(handle->dma_handle.buffer_len, MALLOC_CAP_DMA);       	//For DMA
-    //reset buffer
-    memset(handle->dma_handle.dma_buffer, 0, handle->dma_handle.buffer_len);
 
-    #if MSPI_DEBUG_PRINTS == 1
-        ESP_LOGI(TAG, "Successfully allocated spi_buffer on address: %p", handle->dma_handle.dma_buffer);
-    #endif
+    ESP_LOGD(TAG, "Allocating DMA buffer with %d bytes", handle->dma_handle.buffer_len);
+    handle->dma_handle.dma_buffer = (uint32_t *)heap_caps_malloc(handle->dma_handle.buffer_len, MALLOC_CAP_DMA);       	//For DMA
+    
+    memset(handle->dma_handle.dma_buffer, 0, handle->dma_handle.buffer_len);
+    ESP_LOGD(TAG, "Successfully allocated spi_buffer on address: %p", handle->dma_handle.dma_buffer);
+ 
 
     //Setup DMA descriptors
     handle->dma_handle.descs = (lldesc_t *)calloc(mspi_dma_config->list_num, sizeof(lldesc_t));
-
     uint8_t *data = (uint8_t *)handle->dma_handle.dma_buffer;
 
     for (size_t i = 0; i < mspi_dma_config->list_num; i++)
@@ -552,11 +549,9 @@ esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t
         handle->dma_handle.descs[i].qe.stqe_next = &handle->dma_handle.descs[i+1];
         handle->dma_handle.descs[i].buf = data;
 
-        #if MSPI_DEBUG_PRINTS == 1
-            ESP_LOGI(TAG, "DMA desc %d address: %p", i,(void*) &handle->dma_handle.descs[i]);
-            ESP_LOGI(TAG, "DMA buffer %d address: %p", i,(void*) handle->dma_handle.descs[i].buf);
-        #endif
-
+        ESP_LOGD(TAG, "DMA desc %d address: %p", i,(void*) &handle->dma_handle.descs[i]);
+        ESP_LOGD(TAG, "DMA buffer %d address: %p", i,(void*) handle->dma_handle.descs[i].buf);
+       
         data += dmachunklen;    //Increment buffer pointer
     }
 
@@ -631,7 +626,7 @@ esp_err_t mspi_init(mspi_config_t *mspi_config, mspi_device_handle_t* handle)
     ESP_LOGI(TAG, "SPI registers configured!");
 
     //Set up interrupt
-    //s_mspi_register_interrupt(&spi_internal[host]);
+    s_mspi_register_interrupt_spitrans(&spi_internal[host]);
 
     spi_internal[host].initiated = true;
     *handle = &spi_internal[host];
@@ -764,12 +759,38 @@ esp_err_t mspi_device_transfer_blocking(mspi_transaction_t *mspi_trans_p, mspi_d
     }
 
     handle->polling_done = 0;
+    handle->polling_active = 1;
 
+    handle->hw->slave.trans_done = 0;       //Clear any pending interrupt
+    esp_intr_enable(handle->trans_intr);    //Enable spi interrupt
     handle->hw->cmd.usr = 1;	            // SPI: Start new SPI transfer
 
     while(handle->polling_done != 1){
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        //vTaskDelay(10 / portTICK_PERIOD_MS);
     }
+
+    // Fetch the data from FIFO.
+    if(mspi_trans_p->rx_len > 0)
+    {
+        if(mspi_trans_p->rxdata == NULL){
+            ESP_LOGE(TAG, "rxdata buffer = NULL! Returning.");
+            return ESP_FAIL;  
+        }
+
+        int word_len = (mspi_trans_p->rx_len + 31)/32;    //How many uint32 do we need for rx_len.
+        int byte_len = (mspi_trans_p->rx_len + 7)/8;      //How many bytes do we need for rx_len.
+
+        for (int i = 0; i < word_len; i++)
+        {
+            uint32_t word = handle->hw->data_buf[i];
+            for (int j = 0; j < byte_len; j++)
+            {
+                mspi_trans_p->rxdata[j] = (uint8_t)((word >> (8*j)) & 0xFF);
+            }  
+        }
+          
+    }
+    
 
     // // The function is called when a transaction is done, in ISR or in the task.
     // // Fetch the data from FIFO and call the ``post_cb``.
@@ -793,7 +814,7 @@ esp_err_t mspi_device_transfer_blocking(mspi_transaction_t *mspi_trans_p, mspi_d
     //     host->cur_cs = NO_CS;
     // }
 
-    handle->polling_done = 0;
+    handle->polling_active = 0;
 
     return ESP_OK;
 }

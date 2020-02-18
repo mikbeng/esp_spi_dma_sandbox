@@ -54,8 +54,9 @@ typedef struct {
     double                  clk_speed;
     int                     dummy_cycle;
     uint32_t                initiated;
-    volatile uint32_t       transfer_cont;
-    volatile uint32_t       polling_done;
+    volatile uint32_t       transfer_cont;      //Flag for continuous transfer mode
+    volatile uint32_t       polling_active;     //Flag for polling transfer mode
+    volatile uint32_t       polling_done;       //Flag for polling transfer done
     mspi_dma_handle_t       dma_handle;
 } spi_internal_t;
 
@@ -80,9 +81,7 @@ esp_err_t mspi_deinit(mspi_device_handle_t handle);
 esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle);
 esp_err_t mspi_stop_continuous_DMA(mspi_device_handle_t handle);
 
-esp_err_t mspi_set_addr(uint32_t addr, uint32_t len, bool enable, mspi_device_handle_t handle);
-esp_err_t mspi_set_mosi(uint32_t len, bool enable, mspi_device_handle_t handle);
-esp_err_t mspi_set_miso(uint32_t len, bool enable, mspi_device_handle_t handle);
+
 esp_err_t mspi_get_dma_data_rx(uint8_t *rxdata, uint32_t *rx_len_bytes, mspi_device_handle_t handle);
 
 extern volatile uint32_t int_cnt;
