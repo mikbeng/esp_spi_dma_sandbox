@@ -16,7 +16,7 @@
 #include "string.h"
 #include <driver/spi_common.h>
 #include <driver/spi_master.h>
-#include "my_spi.h"
+#include "mspi.h"
 
 int64_t start_time, end_time;;
 

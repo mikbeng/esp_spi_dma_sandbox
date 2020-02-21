@@ -8,7 +8,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "my_spi.h"
+#include "mspi.h"
 #include "esp_log.h"
 #include "string.h"
 
@@ -39,7 +39,7 @@
 static spi_internal_t spi_internal[3] = { 0 };
 
 //Debug variables
-int level = 0;
+//int level = 0;
 
 static const char * TAG = "mspi";
 	
