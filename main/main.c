@@ -108,7 +108,7 @@ static void spi_task(void *arg)
         vTaskDelay((10) / portTICK_PERIOD_MS);
 
         
-        mspi_get_dma_data_rx(&rx_data, &rx_length, mspi_handle);
+        //mspi_get_dma_data_rx(&spi_trans, mspi_handle);
         mspi_device_transfer_blocking(&spi_trans, mspi_handle);
         AVAL_reg = ((uint16_t)(spi_trans.rxdata[0]) << 8) | ((uint16_t)spi_trans.rxdata[1]);
         angle = TLE5012B_calc_angle_deg(AVAL_reg);

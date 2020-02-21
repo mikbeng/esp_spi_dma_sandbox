@@ -80,12 +80,11 @@ esp_err_t mspi_DMA_deinit(mspi_device_handle_t handle);
 esp_err_t mspi_deinit(mspi_device_handle_t handle);
 esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle);
 esp_err_t mspi_stop_continuous_DMA(mspi_device_handle_t handle);
+
 esp_err_t IRAM_ATTR mspi_device_transfer_blocking(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle);
 esp_err_t mspi_set_transfer_phases(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle);
+esp_err_t mspi_get_dma_data_rx(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle);
 
-esp_err_t mspi_get_dma_data_rx(uint8_t *rxdata, uint32_t *rx_len_bytes, mspi_device_handle_t handle);
-
-extern volatile uint32_t int_cnt;
 
 #ifdef __cplusplus
 } // extern "C"

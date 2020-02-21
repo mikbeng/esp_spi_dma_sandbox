@@ -809,7 +809,7 @@ esp_err_t IRAM_ATTR mspi_device_transfer_blocking(mspi_transaction_t *mspi_trans
     return ESP_OK;
 }
 
-esp_err_t mspi_get_dma_data_rx(uint8_t *rxdata, uint32_t *rx_len_bytes, mspi_device_handle_t handle)
+esp_err_t mspi_get_dma_data_rx(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle)
 {
     if(handle->initiated == false){
         ESP_LOGE(TAG, "mspi not initiated! Init first");
@@ -849,11 +849,9 @@ esp_err_t mspi_get_dma_data_rx(uint8_t *rxdata, uint32_t *rx_len_bytes, mspi_dev
     //ESP_LOGD(TAG, "dma_data_buf address:%p. Value:[0x%02x, 0x%02x]", dma_data_buf, *dma_data_buf, *(dma_data_buf+1));
     //ESP_LOGD(TAG, "dma_data_size:%d", dma_data_size);
 
-    *rx_len_bytes = dma_data_size;
-
     for (size_t i = 0; i < dma_data_size; i++)
     {
-        rxdata[i] = *(dma_data_buf+i);
+        mspi_trans_p->rxdata[i] = *(dma_data_buf+i);
     }
     
     return ESP_OK;
