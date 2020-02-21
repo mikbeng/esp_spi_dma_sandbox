@@ -390,7 +390,7 @@ static esp_err_t s_mspi_configure_registers(spi_internal_t *spi)
     return ESP_OK;
 }
 
-static esp_err_t s_mspi_set_addr(uint32_t addr, uint32_t len, bool enable, spi_internal_t *spi)
+static esp_err_t IRAM_ATTR s_mspi_set_addr(uint32_t addr, uint32_t len, bool enable, spi_internal_t *spi)
 { 
     if(spi->initiated == false){
         ESP_LOGE(TAG, "mspi not initiated! Init first");
@@ -414,7 +414,7 @@ static esp_err_t s_mspi_set_addr(uint32_t addr, uint32_t len, bool enable, spi_i
     return ESP_OK;
 }
 
-static esp_err_t s_mspi_set_cmd(uint16_t cmd, uint32_t len, bool enable, spi_internal_t *spi)
+static esp_err_t IRAM_ATTR s_mspi_set_cmd(uint16_t cmd, uint32_t len, bool enable, spi_internal_t *spi)
 { 
     if(spi->initiated == false){
         ESP_LOGE(TAG, "mspi not initiated! Init first");
@@ -441,7 +441,7 @@ static esp_err_t s_mspi_set_cmd(uint16_t cmd, uint32_t len, bool enable, spi_int
     return ESP_OK;
 }
 
-static esp_err_t s_mspi_set_mosi(uint32_t len, bool enable, spi_internal_t *spi)
+static esp_err_t IRAM_ATTR s_mspi_set_mosi(uint32_t len, bool enable, spi_internal_t *spi)
 {
     if(spi->initiated == false){
         ESP_LOGE(TAG, "mspi not initiated! Init first");
@@ -648,7 +648,7 @@ esp_err_t mspi_deinit(mspi_device_handle_t handle)
 	return ESP_OK;
 }
 
-esp_err_t mspi_set_transfer_phases(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle)
+esp_err_t IRAM_ATTR s_mspi_set_transfer_phases(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle)
 {
 
     //Reset miso,mosi and address
@@ -692,7 +692,7 @@ esp_err_t IRAM_ATTR mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, 
         return ESP_FAIL;
     }
     
-    mspi_set_transfer_phases(mspi_trans_p, handle);
+    s_mspi_set_transfer_phases(mspi_trans_p, handle);
 
     if(mspi_trans_p->tx_len != 0){
         //Reset dma tx
@@ -771,6 +771,8 @@ esp_err_t IRAM_ATTR mspi_device_transfer_blocking(mspi_transaction_t *mspi_trans
         return ESP_FAIL;  
     }
 
+    s_mspi_set_transfer_phases(mspi_trans_p, handle);
+
     handle->polling_done = 0;
     handle->polling_active = 1;
 
@@ -782,19 +784,17 @@ esp_err_t IRAM_ATTR mspi_device_transfer_blocking(mspi_transaction_t *mspi_trans
         //vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 
+    int byte_len = (mspi_trans_p->rx_len + 7)/8;      //How many bytes do we need for rx_len.
+    uint8_t *spi_data = (uint8_t *)handle->hw->data_buf;
+    uint8_t *user_data = (uint8_t *)mspi_trans_p->rxdata;
+
     // Fetch the data from FIFO.
     if(mspi_trans_p->rx_len > 0)
     {
         if(mspi_trans_p->rxdata == NULL){
             ESP_LOGE(TAG, "rxdata buffer = NULL! Returning.");
             return ESP_FAIL;  
-        }
-
-        int word_len = (mspi_trans_p->rx_len + 31)/32;    //How many uint32 do we need for rx_len.
-        int byte_len = (mspi_trans_p->rx_len + 7)/8;      //How many bytes do we need for rx_len.
-        uint8_t *spi_data = (uint8_t *)handle->hw->data_buf;
-        uint8_t *user_data = (uint8_t *)mspi_trans_p->rxdata;
-        
+        }       
 
         while (byte_len)
         {

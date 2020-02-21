@@ -123,9 +123,6 @@ static void spi_task(void *arg)
     spi_trans_revol.rx_len = 16;
     spi_trans_revol.rxdata = &rx_data;
 
-
-    mspi_set_transfer_phases(&spi_trans_aval, mspi_handle);
-
     //Kick off transfers
     mspi_start_continuous_DMA(&spi_trans_aval, mspi_handle);
     
@@ -151,15 +148,13 @@ static void spi_task(void *arg)
             vTaskSuspendAll();
             start_time = esp_timer_get_time();
             mspi_stop_continuous_DMA(mspi_handle);
-            memset(&rx_data,0,sizeof(rx_data));
+            //memset(&rx_data,0,sizeof(rx_data));
 
-            mspi_set_transfer_phases(&spi_trans_revol, mspi_handle);
             mspi_device_transfer_blocking(&spi_trans_revol, mspi_handle);
             REVOL_reg = ((uint16_t)(spi_trans_revol.rxdata[0]) << 8) | ((uint16_t)spi_trans_revol.rxdata[1]);
             revol = (((int16_t)(REVOL_reg << 7)) >> 7);
             //ESP_LOGI(__func__, "Starting DMA");
 
-            mspi_set_transfer_phases(&spi_trans_aval, mspi_handle);
             mspi_start_continuous_DMA(&spi_trans_aval, mspi_handle);
             end_time = esp_timer_get_time();
             loop_cnt = 0;
