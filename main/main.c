@@ -18,6 +18,36 @@
 #include <driver/spi_master.h>
 #include "my_spi.h"
 
+int64_t start_time, end_time;;
+
+uint16_t TLE5012B_get_cmd(uint8_t reg_address, uint8_t reg_num, bool safety_word){
+    //prep command word
+    uint8_t TLE5012B_cmd_RW = 1;		//read operation
+    uint8_t address = reg_address;
+    uint8_t TLE5012B_cmd_LOCK = 0b0000;
+	if (address >= 0x05 && address <= 0x11)
+	{
+		uint8_t TLE5012B_cmd_LOCK = 0b1010;    	//Configuration access for addresses 0x05 : 0x11
+	}
+
+	uint8_t TLE5012B_cmd_UPD = 0;
+	uint8_t TLE5012B_cmd_ADDR = address;
+
+    uint8_t TLE5012B_cmd_ND = 0;
+    if(!safety_word && reg_num == 1){
+        TLE5012B_cmd_ND = 0;				    //0x00 for no Safety word (This is the way. For DMA to work..)
+    }
+    else
+    {
+        TLE5012B_cmd_ND = reg_num;				
+    }
+    
+    uint16_t cmd = ((TLE5012B_cmd_RW << 15) | (TLE5012B_cmd_LOCK << 11) | (TLE5012B_cmd_UPD << 10) | (TLE5012B_cmd_ADDR << 4) | (TLE5012B_cmd_ND << 0));
+
+    return cmd;
+ 
+}
+
 float TLE5012B_calc_angle_deg(uint16_t AVAL_reg)
 {
 	uint16_t temp_aval = 0;
@@ -40,13 +70,15 @@ static void spi_task(void *arg)
     mspi_dma_handle_t mspi_dma_handle;
 
 
-    mspi_transaction_t spi_trans;
+    mspi_transaction_t spi_trans_aval;
+    mspi_transaction_t spi_trans_revol;
 
     
     uint8_t rx_data[4] = {0};
     uint32_t rx_length = 0;
-    uint16_t AVAL_reg;
+    uint16_t AVAL_reg, REVOL_reg;
     float angle;
+    uint16_t revol;
 
     gpio_pad_select_gpio(GPIO_NUM_2);
     /* Set the GPIO as a push/pull output */
@@ -74,32 +106,28 @@ static void spi_task(void *arg)
 
     mspi_DMA_init(&mspi_dma_config, mspi_handle);
 
-    //prep command word
-    uint8_t TLE5012B_cmd_RW = 1;		//read operation
-    uint8_t address = 0x02;
-    uint8_t TLE5012B_cmd_LOCK = 0b0000;
-	if (address >= 0x05 && address <= 0x11)
-	{
-		uint8_t TLE5012B_cmd_LOCK = 0b1010;    	//Configuration access for addresses 0x05 : 0x11
-	}
+    uint16_t cmd_aval = TLE5012B_get_cmd(0x02, 1, false);
+    uint16_t cmd_revol = TLE5012B_get_cmd(0x04, 1, false);
 
-	uint8_t TLE5012B_cmd_UPD = 0;
-	uint8_t TLE5012B_cmd_ADDR = address;
-	uint8_t TLE5012B_cmd_ND = 0;				//0x00 for no Safety word (This is the way. For DMA to work..)
-    uint16_t cmd = ((TLE5012B_cmd_RW << 15) | (TLE5012B_cmd_LOCK << 11) | (TLE5012B_cmd_UPD << 10) | (TLE5012B_cmd_ADDR << 4) | (TLE5012B_cmd_ND << 0));
- 
     //Zero out the transaction
-    memset(&spi_trans, 0, sizeof(spi_trans));       	
+    memset(&spi_trans_aval, 0, sizeof(spi_trans_aval));       	
+    spi_trans_aval.addr_len = 16;
+    spi_trans_aval.addr = cmd_aval;
+    spi_trans_aval.rx_len = 16;
+    spi_trans_aval.rxdata = &rx_data;
 
-    spi_trans.addr_len = 16;
-    spi_trans.addr = cmd;
-    spi_trans.rx_len = 16;
-    spi_trans.rxdata = &rx_data;
+    //Zero out the transaction
+    memset(&spi_trans_revol, 0, sizeof(spi_trans_revol));       	
+    spi_trans_revol.addr_len = 16;
+    spi_trans_revol.addr = cmd_revol;
+    spi_trans_revol.rx_len = 16;
+    spi_trans_revol.rxdata = &rx_data;
 
-    mspi_set_transfer_phases(&spi_trans, mspi_handle);
+
+    mspi_set_transfer_phases(&spi_trans_aval, mspi_handle);
 
     //Kick off transfers
-    mspi_start_continuous_DMA(&spi_trans, mspi_handle);
+    mspi_start_continuous_DMA(&spi_trans_aval, mspi_handle);
     
     int loop_cnt = 0;
 
@@ -108,25 +136,37 @@ static void spi_task(void *arg)
         vTaskDelay((10) / portTICK_PERIOD_MS);
 
         
-        //mspi_get_dma_data_rx(&spi_trans, mspi_handle);
-        mspi_device_transfer_blocking(&spi_trans, mspi_handle);
-        AVAL_reg = ((uint16_t)(spi_trans.rxdata[0]) << 8) | ((uint16_t)spi_trans.rxdata[1]);
+        mspi_get_dma_data_rx(&spi_trans_aval, mspi_handle);
+        AVAL_reg = ((uint16_t)(spi_trans_aval.rxdata[0]) << 8) | ((uint16_t)spi_trans_aval.rxdata[1]);
         angle = TLE5012B_calc_angle_deg(AVAL_reg);
 
         //ESP_LOGI(__func__, "angle: %.2f ", angle);
 
 
-        //loop_cnt++;
-        if(loop_cnt == 2){
-            ESP_LOGI(__func__, "Stopping DMA");
+        loop_cnt++;
+        if(loop_cnt == 50){
+
+            ESP_LOGI(__func__, "angle: %.2f ", angle);
+            //ESP_LOGI(__func__, "Stopping DMA");
+            vTaskSuspendAll();
+            start_time = esp_timer_get_time();
             mspi_stop_continuous_DMA(mspi_handle);
-
             memset(&rx_data,0,sizeof(rx_data));
-            vTaskDelay(10 / portTICK_PERIOD_MS);
-            ESP_LOGI(__func__, "Starting DMA");
 
-            mspi_start_continuous_DMA(&spi_trans, mspi_handle);
+            mspi_set_transfer_phases(&spi_trans_revol, mspi_handle);
+            mspi_device_transfer_blocking(&spi_trans_revol, mspi_handle);
+            REVOL_reg = ((uint16_t)(spi_trans_revol.rxdata[0]) << 8) | ((uint16_t)spi_trans_revol.rxdata[1]);
+            revol = (((int16_t)(REVOL_reg << 7)) >> 7);
+            //ESP_LOGI(__func__, "Starting DMA");
+
+            mspi_set_transfer_phases(&spi_trans_aval, mspi_handle);
+            mspi_start_continuous_DMA(&spi_trans_aval, mspi_handle);
+            end_time = esp_timer_get_time();
             loop_cnt = 0;
+            xTaskResumeAll();
+
+            ESP_LOGI(__func__, "delta-time: %lld", end_time-start_time);
+            ESP_LOGI(__func__, "revol: %d ", revol);
         }
 
     }

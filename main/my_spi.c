@@ -676,7 +676,7 @@ esp_err_t mspi_set_transfer_phases(mspi_transaction_t *mspi_trans_p, mspi_device
     return ESP_OK;
 }
 
-esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle)
+esp_err_t IRAM_ATTR mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle)
 {
     if(handle->initiated == false){
         ESP_LOGE(TAG, "mspi not initiated! Init first");
@@ -718,7 +718,7 @@ esp_err_t mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_devic
     return ESP_OK;
 }
 
-esp_err_t mspi_stop_continuous_DMA(mspi_device_handle_t handle)
+esp_err_t IRAM_ATTR mspi_stop_continuous_DMA(mspi_device_handle_t handle)
 {
     if(handle->initiated == false){
         ESP_LOGE(TAG, "mspi not initiated! Init first");
