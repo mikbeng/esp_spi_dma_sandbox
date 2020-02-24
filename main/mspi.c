@@ -37,12 +37,12 @@
 /* [GLOB] Global variables                                                   */
 /* ========================================================================= */
 static spi_internal_t spi_internal[3] = { 0 };
-
-//Debug variables
-//int level = 0;
-
+static portMUX_TYPE mspi_lock = portMUX_INITIALIZER_UNLOCKED;
 static const char * TAG = "mspi";
-	
+
+volatile static int level = 0;
+volatile int64_t time_delta;
+int64_t time_start;
 /* ========================================================================= */
 /* [PFUN] Private functions implementations                                  */
 /* ========================================================================= */
@@ -83,10 +83,11 @@ static void IRAM_ATTR s_spi_dma_intr(void *arg)
 // This is run in interrupt context.
 static void IRAM_ATTR s_spi_trans_intr(void *arg)
 {
+    time_start = esp_timer_get_time();
     spi_internal_t *spi_internal_p = (spi_internal_t *)arg;
 
-    //Temporarily disable interrupt 
-    esp_intr_disable(spi_internal_p->trans_intr);
+    //Temporarily disable interrupt (Do we need this??)
+    //esp_intr_disable(spi_internal_p->trans_intr);
 
     uint32_t spi_intr_slave_val = spi_internal_p->hw->slave.val; //Read interrupt status
 
@@ -95,29 +96,26 @@ static void IRAM_ATTR s_spi_trans_intr(void *arg)
 
     if (spi_intr_slave_val & spi_trans_done_int) { 
 
-        // //Start new transfer if continuous mode active
-        // if(spi_internal_p->transfer_cont){
+        //Start new transfer if continuous interrupt mode is active
+        if(spi_internal_p->transfer_cont_interrupt){
 
-        //     //Check if it's rx or tx transfers (MISO or MOSI)
-        //     if(spi_internal_p->hw->user.usr_mosi == 1){
-        //         spi_internal_p->hw->dma_out_link.start = 1;
-        //     }
-        //     if(spi_internal_p->hw->user.usr_miso == 1){
-        //         spi_internal_p->hw->dma_in_link.start = 1;
-        //     }
+            //Check if it's rx or tx transfers (MISO or MOSI)
+            if(spi_internal_p->hw->user.usr_mosi == 1){
+                spi_internal_p->hw->dma_out_link.start = 1;
+            }
+            if(spi_internal_p->hw->user.usr_miso == 1){
+                spi_internal_p->hw->dma_in_link.start = 1;
+            }
             
-        //     spi_internal_p->hw->cmd.usr = 1;	            // SPI: Start new SPI transfer
-        // }
-        // else{
-        //     spi_internal_p->polling_done = 1;
-        // }
-
-        if(spi_internal_p->polling_active){
+            spi_internal_p->hw->cmd.usr = 1;	            // SPI: Start new SPI transfer
+        }
+        else if(spi_internal_p->polling_active){
             spi_internal_p->polling_done = 1;
         }
-
         spi_internal_p->hw->slave.trans_done = 0;      //Clears the interrupt
     }
+
+    time_delta = esp_timer_get_time() - time_start;
 
     //GPIO debug pin
     //level ^= 1;
@@ -462,7 +460,7 @@ static esp_err_t IRAM_ATTR s_mspi_set_mosi(uint32_t len, bool enable, spi_intern
     return ESP_OK;
 }
 
-static esp_err_t s_mspi_set_miso(uint32_t len, bool enable, spi_internal_t *spi)
+static esp_err_t IRAM_ATTR s_mspi_set_miso(uint32_t len, bool enable, spi_internal_t *spi)
 {
     if(spi->initiated == false){
         ESP_LOGE(TAG, "mspi not initiated! Init first");
@@ -576,15 +574,13 @@ esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t
         //Configure outlink descriptor
         handle->hw->dma_out_link.addr           = (int)(handle->dma_handle.descs) & 0xFFFFF;
         handle->hw->dma_conf.outdscr_burst_en   = 1;
-        handle->hw->dma_conf.out_data_burst_en  = 0;
-        //handle->hw->dma_out_link.start		    = 1;	
+        handle->hw->dma_conf.out_data_burst_en  = 0;	
     }
     else
     {
         //Configure inlink descriptor
         handle->hw->dma_in_link.addr            = (int)(handle->dma_handle.descs) & 0xFFFFF; 
         handle->hw->dma_conf.indscr_burst_en    = 1;
-        //handle->hw->dma_in_link.start           = 1;
     }
 
     //Register any DMA interrupts if needed
@@ -636,8 +632,17 @@ esp_err_t mspi_init(mspi_config_t *mspi_config, mspi_device_handle_t* handle)
 
 esp_err_t mspi_deinit(mspi_device_handle_t handle)
 {
-	handle->hw->dma_conf.dma_continue	= 0;
-	handle->hw->dma_out_link.start		= 0;
+    portENTER_CRITICAL(&mspi_lock);
+    //Check if DMA is used
+    if(handle->dma_handle.dmaChan != 0){
+        if(handle->transfer_cont || handle->transfer_cont_interrupt){
+            //Stop any ongoing dma transfers
+            mspi_stop_continuous_DMA(handle);
+        }
+        mspi_DMA_deinit(handle);
+    }
+
+    //Stop any ongoing polling transfers
 	handle->hw->cmd.usr					= 0;
 
     esp_intr_disable(handle->trans_intr);
@@ -645,6 +650,10 @@ esp_err_t mspi_deinit(mspi_device_handle_t handle)
 
 	// TODO : Reset GPIO Matrix
 	spicommon_periph_free(handle->host);
+
+    memset(handle, 0, sizeof(spi_internal_t));
+
+    portEXIT_CRITICAL(&mspi_lock);
 	return ESP_OK;
 }
 
@@ -758,6 +767,78 @@ esp_err_t IRAM_ATTR mspi_stop_continuous_DMA(mspi_device_handle_t handle)
     return ESP_OK;
 }
 
+esp_err_t IRAM_ATTR mspi_start_continuous_DMA_interrupt(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle)
+{
+    if(handle->initiated == false){
+        ESP_LOGE(TAG, "mspi not initiated! Init first");
+        return ESP_FAIL;    
+    }
+    if(handle->dma_handle.dmaChan == 0){
+        ESP_LOGE(TAG, "DMA not used! Init DMA first with channel 1 or 2");
+        return ESP_FAIL;
+    }
+
+    if((mspi_trans_p->tx_len != 0) && (mspi_trans_p->rx_len != 0)){
+        ESP_LOGE(TAG, "DMA rx and tx simultaniously not supported at the moment!");
+        return ESP_FAIL;
+    }
+    
+    s_mspi_set_transfer_phases(mspi_trans_p, handle);
+
+    if(mspi_trans_p->tx_len != 0){
+        handle->hw->dma_out_link.start = 1;
+    }
+
+    if(mspi_trans_p->rx_len != 0){
+        handle->hw->dma_in_link.start = 1;
+    }
+
+    handle->transfer_cont_interrupt = 1;
+    handle->hw->slave.trans_done = 0;      //Clear any pending interrupt
+    esp_intr_enable(handle->trans_intr);
+
+    //Kick off continuous interrupt based transfers
+    handle->hw->cmd.usr = 1;
+
+    return ESP_OK;
+}
+esp_err_t IRAM_ATTR mspi_stop_continuous_DMA_interrupt(mspi_device_handle_t handle)
+{
+    if(handle->initiated == false){
+        ESP_LOGE(TAG, "mspi not initiated! Init first");
+        return ESP_FAIL;    
+    }
+    if(handle->dma_handle.dmaChan == 0){
+        ESP_LOGE(TAG, "DMA not used! Init DMA first with channel 1 or 2");
+        return ESP_FAIL;
+    }
+
+    if(handle->transfer_cont_interrupt == 0){
+        ESP_LOGW(TAG, "mspi_stop_continuous_DMA_rx: Continuous interrupt transfers not active. Nothing to be done.");
+        return ESP_OK;
+    }
+
+    esp_intr_disable(handle->trans_intr);
+
+    handle->hw->dma_in_link.stop        = 1;
+    handle->hw->dma_out_link.stop       = 1;
+    
+    //Reset SPI DMA
+    handle->hw->dma_conf.val        		|= SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST;
+    handle->hw->dma_out_link.start  		= 0;
+    handle->hw->dma_in_link.start   		= 0;
+    handle->hw->dma_conf.val        		&= ~(SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST);
+
+    //reset buffer
+    memset(handle->dma_handle.dma_buffer, 0, handle->dma_handle.buffer_len);
+
+    // Reset SPI DMA periph
+    periph_module_reset( PERIPH_SPI_DMA_MODULE );
+
+    handle->transfer_cont_interrupt               = 0;
+
+    return ESP_OK;
+}
 esp_err_t IRAM_ATTR mspi_device_transfer_blocking(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle)
 { 
     if(handle->initiated == false){
@@ -766,7 +847,7 @@ esp_err_t IRAM_ATTR mspi_device_transfer_blocking(mspi_transaction_t *mspi_trans
     }
 
     //Check if transfer_cont==1. If so, do not allow any polling since the device is busy.
-    if(handle->transfer_cont == 1){
+    if(handle->transfer_cont || handle->transfer_cont_interrupt){
         ESP_LOGE(TAG, "Continuous transfers active! Polling not allowed.");
         return ESP_FAIL;  
     }
@@ -849,6 +930,14 @@ esp_err_t mspi_get_dma_data_rx(mspi_transaction_t *mspi_trans_p, mspi_device_han
     //ESP_LOGD(TAG, "dma_data_buf address:%p. Value:[0x%02x, 0x%02x]", dma_data_buf, *dma_data_buf, *(dma_data_buf+1));
     //ESP_LOGD(TAG, "dma_data_size:%d", dma_data_size);
 
+    //Sanity check length
+    // if(mspi_trans_p->rx_len != (dma_data_size*8))
+    // {
+    //     ESP_LOGE(TAG, "Given rx_length differs from configurated length in linked list! mspi_trans_p->rx_len: %d, dma_data_size: %d",mspi_trans_p->rx_len, dma_data_size);
+    //     return ESP_FAIL;
+    // }
+
+    //Copy data to user buffer
     for (size_t i = 0; i < dma_data_size; i++)
     {
         mspi_trans_p->rxdata[i] = *(dma_data_buf+i);

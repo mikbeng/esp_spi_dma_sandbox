@@ -54,9 +54,10 @@ typedef struct {
     double                  clk_speed;
     int                     dummy_cycle;
     uint32_t                initiated;
-    volatile uint32_t       transfer_cont;      //Flag for continuous transfer mode
-    volatile uint32_t       polling_active;     //Flag for polling transfer mode
-    volatile uint32_t       polling_done;       //Flag for polling transfer done
+    volatile uint32_t       transfer_cont;              //Flag for continuous transfer mode
+    volatile uint32_t       transfer_cont_interrupt;    //Flag for "continuous" transfer interrupt mode
+    volatile uint32_t       polling_active;             //Flag for polling transfer mode
+    volatile uint32_t       polling_done;               //Flag for polling transfer done
     mspi_dma_handle_t       dma_handle;
 } spi_internal_t;
 
@@ -79,11 +80,14 @@ esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t
 esp_err_t mspi_DMA_deinit(mspi_device_handle_t handle);
 esp_err_t mspi_deinit(mspi_device_handle_t handle);
 esp_err_t IRAM_ATTR mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle);
+esp_err_t IRAM_ATTR mspi_start_continuous_DMA_interrupt(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle);
 esp_err_t IRAM_ATTR mspi_stop_continuous_DMA(mspi_device_handle_t handle);
+esp_err_t IRAM_ATTR mspi_stop_continuous_DMA_interrupt(mspi_device_handle_t handle);
 
 esp_err_t IRAM_ATTR mspi_device_transfer_blocking(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle);
 esp_err_t mspi_get_dma_data_rx(mspi_transaction_t *mspi_trans_p, mspi_device_handle_t handle);
 
+extern volatile int64_t time_delta;
 
 #ifdef __cplusplus
 } // extern "C"
