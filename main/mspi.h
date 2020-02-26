@@ -54,10 +54,11 @@ typedef struct {
     double                  clk_speed;
     int                     dummy_cycle;
     uint32_t                initiated;
-    volatile uint32_t       transfer_cont;              //Flag for continuous transfer mode
-    volatile uint32_t       transfer_cont_interrupt;    //Flag for "continuous" transfer interrupt mode
-    volatile uint32_t       polling_active;             //Flag for polling transfer mode
-    volatile uint32_t       polling_done;               //Flag for polling transfer done
+    volatile uint32_t       transfer_cont;                  //Flag for continuous transfer mode
+    volatile uint32_t       transfer_cont_interrupt;        //Flag for "continuous" transfer interrupt mode
+    volatile uint32_t       transfer_cont_interrupt_stop;        //Flag for "continuous" transfer interrupt mode
+    volatile uint32_t       polling_active;                 //Flag for polling transfer mode
+    volatile uint32_t       polling_done;                   //Flag for polling transfer done
     mspi_dma_handle_t       dma_handle;
 } spi_internal_t;
 

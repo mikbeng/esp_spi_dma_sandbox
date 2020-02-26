@@ -164,7 +164,8 @@ static void spi_task(void *arg)
     gpio_set_direction(GPIO_NUM_2, GPIO_MODE_OUTPUT);
     gpio_set_level(GPIO_NUM_2, 0);
     
-    uint8_t rx_data[4] = {0};
+    uint8_t rx_data_aval[4] = {0};
+    uint8_t rx_data_revol[4] = {0};
     uint32_t rx_length = 0;
     uint16_t AVAL_reg, REVOL_reg;
     uint16_t safe_w = 0;
@@ -200,17 +201,17 @@ static void spi_task(void *arg)
     spi_trans_aval.addr_len = 16;
     spi_trans_aval.addr = cmd_aval;
     spi_trans_aval.rx_len = 16;
-    spi_trans_aval.rxdata = &rx_data;
+    spi_trans_aval.rxdata = &rx_data_aval;
 
     //Zero out the transaction
     memset(&spi_trans_revol, 0, sizeof(spi_trans_revol));       	
     spi_trans_revol.addr_len = 16;
     spi_trans_revol.addr = cmd_revol;
     spi_trans_revol.rx_len = 16;
-    spi_trans_revol.rxdata = &rx_data;
+    spi_trans_revol.rxdata = &rx_data_revol;
 
     // //Kick off transfers
-    // mspi_start_continuous_DMA(&spi_trans_aval, mspi_handle);
+    //mspi_start_continuous_DMA(&spi_trans_aval, mspi_handle);
     
     mspi_start_continuous_DMA_interrupt(&spi_trans_aval, mspi_handle);
 
@@ -230,34 +231,41 @@ static void spi_task(void *arg)
 
         //spi_idf_TLE5012B_poll(0x02, &AVAL_reg, &safe_w);
 
-        mspi_get_dma_data_rx(&spi_trans_aval, mspi_handle);
+        //mspi_get_dma_data_rx(&spi_trans_aval, mspi_handle);
         AVAL_reg = ((uint16_t)(spi_trans_aval.rxdata[0]) << 8) | ((uint16_t)spi_trans_aval.rxdata[1]);
         angle = TLE5012B_calc_angle_deg(AVAL_reg);
         //ESP_LOGI(__func__, "angle: %.2f, interrupt_time: %lld ", angle, time_delta);
 
 
         loop_cnt++;
-        if(loop_cnt == 50){
+        if(loop_cnt == 10){
 
-            ESP_LOGI(__func__, "angle: %.2f ", angle);
+            //ESP_LOGI(__func__, "angle: %.2f ", angle);
             //ESP_LOGI(__func__, "Stopping DMA");
-            vTaskSuspendAll();
+            //vTaskSuspendAll();
             start_time = esp_timer_get_time();
-            mspi_stop_continuous_DMA_interrupt(mspi_handle);
-            //memset(&rx_data,0,sizeof(rx_data));
 
+            mspi_stop_continuous_DMA_interrupt(mspi_handle);
+
+            vTaskDelay((10) / portTICK_PERIOD_MS);
+ 
             mspi_device_transfer_blocking(&spi_trans_revol, mspi_handle);
+            //mspi_device_transfer_blocking(&spi_trans_revol, mspi_handle);
             REVOL_reg = ((uint16_t)(spi_trans_revol.rxdata[0]) << 8) | ((uint16_t)spi_trans_revol.rxdata[1]);
             revol = (((int16_t)(REVOL_reg << 7)) >> 7);
+
+            //mspi_device_transfer_blocking(&spi_trans_revol, mspi_handle);
+            //REVOL_reg = ((uint16_t)(spi_trans_revol.rxdata[0]) << 8) | ((uint16_t)spi_trans_revol.rxdata[1]);
+            //revol = (((int16_t)(REVOL_reg << 7)) >> 7);
             //ESP_LOGI(__func__, "Starting DMA");
 
             mspi_start_continuous_DMA_interrupt(&spi_trans_aval, mspi_handle);
             end_time = esp_timer_get_time();
             loop_cnt = 0;
-            xTaskResumeAll();
+            //xTaskResumeAll();
 
-            ESP_LOGI(__func__, "delta-time: %lld", end_time-start_time);
-            ESP_LOGI(__func__, "revol: %d ", revol);
+            ESP_LOGI(__func__, "Revol: %d, delta-time: %lld",revol, end_time-start_time);
+            //ESP_LOGI(__func__, "revol: %d ", revol);
         }
 
     }

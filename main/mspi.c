@@ -40,9 +40,10 @@ static spi_internal_t spi_internal[3] = { 0 };
 static portMUX_TYPE mspi_lock = portMUX_INITIALIZER_UNLOCKED;
 static const char * TAG = "mspi";
 
-volatile static int level = 0;
+volatile static int level_io2 = 0;
+volatile static int level_io4 = 0;
 volatile int64_t time_delta;
-int64_t time_start;
+volatile int64_t time_start;
 /* ========================================================================= */
 /* [PFUN] Private functions implementations                                  */
 /* ========================================================================= */
@@ -76,6 +77,10 @@ static void IRAM_ATTR s_spi_dma_intr(void *arg)
 
     spi_internal_p->hw->dma_int_clr.val = spi_intr_status;     //Clears the interrupt
 
+    //GPIO debug pin
+    level_io4 ^= 1;
+    gpio_set_level(GPIO_NUM_4, level_io4);
+
     //Finally, enable the interrupt
     esp_intr_enable(spi_internal_p->dma_handle.dma_intr);
 }
@@ -90,6 +95,7 @@ static void IRAM_ATTR s_spi_trans_intr(void *arg)
     //esp_intr_disable(spi_internal_p->trans_intr);
 
     uint32_t spi_intr_slave_val = spi_internal_p->hw->slave.val; //Read interrupt status
+    uint32_t state = spi_internal_p->hw->ext2.st;
 
     //Debug prints
     //ets_printf("SPI TRANS INT! spi_intr_slave_val:%d\n", spi_intr_slave_val);
@@ -99,30 +105,36 @@ static void IRAM_ATTR s_spi_trans_intr(void *arg)
         //Start new transfer if continuous interrupt mode is active
         if(spi_internal_p->transfer_cont_interrupt){
 
-            //Check if it's rx or tx transfers (MISO or MOSI)
-            if(spi_internal_p->hw->user.usr_mosi == 1){
-                spi_internal_p->hw->dma_out_link.start = 1;
+            if(spi_internal_p->transfer_cont_interrupt_stop){
+                esp_intr_disable(spi_internal_p->trans_intr);   //Transfer done - disable interrupt
+                spi_internal_p->transfer_cont_interrupt_stop = 0;
             }
-            if(spi_internal_p->hw->user.usr_miso == 1){
-                spi_internal_p->hw->dma_in_link.start = 1;
-            }
-            
-            spi_internal_p->hw->cmd.usr = 1;	            // SPI: Start new SPI transfer
+            else
+            {
+                //Check if it's rx or tx transfers (MISO or MOSI)
+                if(spi_internal_p->hw->user.usr_mosi == 1){
+                    spi_internal_p->hw->dma_out_link.start = 1;
+                }
+                if(spi_internal_p->hw->user.usr_miso == 1){
+                    spi_internal_p->hw->dma_in_link.start = 1;
+                }
+                spi_internal_p->hw->cmd.usr = 1;	            // SPI: Start new SPI transfer
+            }  
         }
         else if(spi_internal_p->polling_active){
             spi_internal_p->polling_done = 1;
+            esp_intr_disable(spi_internal_p->trans_intr);   //Transfer done - disable interrupt
         }
+        
         spi_internal_p->hw->slave.trans_done = 0;      //Clears the interrupt
     }
 
     time_delta = esp_timer_get_time() - time_start;
 
     //GPIO debug pin
-    //level ^= 1;
-    //gpio_set_level(GPIO_NUM_2, level);
+    level_io2 ^= 1;
+    gpio_set_level(GPIO_NUM_2, level_io2);
 
-    //Finally, enable the interrupt
-    //esp_intr_enable(spi_internal_p->trans_intr);
 }
 
 static spi_dev_t *s_mspi_get_hw_for_host(
@@ -188,7 +200,7 @@ static esp_err_t s_mspi_register_interrupt_dmatrans(spi_internal_t *spi)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "esp_intr_alloc() returned %d", ret);
     }
-    //esp_intr_enable(spi.trans_intr);
+
     int int_cpu = esp_intr_get_cpu(spi->dma_handle.dma_intr);
     ESP_LOGI(TAG, "Allocated interrupt for hardware source: %d on cpu %d", dma_int_source, int_cpu);
 
@@ -339,8 +351,8 @@ static esp_err_t s_mspi_configure_registers(spi_internal_t *spi)
 
 
     //Set up QIO/DIO if needed
-    spi->hw->ctrl.val		&= ~(SPI_FREAD_DUAL|SPI_FREAD_QUAD|SPI_FREAD_DIO|SPI_FREAD_QIO);
-    spi->hw->user.val		&= ~(SPI_FWRITE_DUAL|SPI_FWRITE_QUAD|SPI_FWRITE_DIO|SPI_FWRITE_QIO);
+    //spi->hw->ctrl.val		&= ~(SPI_FREAD_DUAL|SPI_FREAD_QUAD|SPI_FREAD_DIO|SPI_FREAD_QIO);
+    //spi->hw->user.val		&= ~(SPI_FWRITE_DUAL|SPI_FWRITE_QUAD|SPI_FWRITE_DIO|SPI_FWRITE_QIO);
 
     spi->hw->user1.usr_addr_bitlen       = 0;
     spi->hw->user2.usr_command_bitlen    = 0;
@@ -382,8 +394,6 @@ static esp_err_t s_mspi_configure_registers(spi_internal_t *spi)
     spi->hw->ctrl2.hold_time            = 3;
     spi->hw->user.cs_setup              = 1;
     spi->hw->ctrl2.setup_time           = 3;
-
-
 
     return ESP_OK;
 }
@@ -581,6 +591,7 @@ esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t
         //Configure inlink descriptor
         handle->hw->dma_in_link.addr            = (int)(handle->dma_handle.descs) & 0xFFFFF; 
         handle->hw->dma_conf.indscr_burst_en    = 1;
+        handle->hw->dma_in_link.auto_ret = 0;
     }
 
     //Register any DMA interrupts if needed
@@ -717,6 +728,9 @@ esp_err_t IRAM_ATTR mspi_start_continuous_DMA(mspi_transaction_t *mspi_trans_p, 
         handle->hw->dma_conf.dma_rx_stop		    = 0;	// Disable stop
     }
 
+    //handle->hw->dma_int_clr.val = 0x000001FF;  //Clears all pending interrupts
+    //esp_intr_enable(handle->dma_handle.dma_intr);
+
     //Kick off continuous transfers
     handle->hw->dma_conf.dma_continue		    = 1;
     handle->hw->cmd.usr                         = 1;
@@ -743,13 +757,17 @@ esp_err_t IRAM_ATTR mspi_stop_continuous_DMA(mspi_device_handle_t handle)
         return ESP_OK;
     }
     
-    //esp_intr_disable(handle->trans_intr);
-    handle->hw->cmd.usr                 = 0;
+    portENTER_CRITICAL(&mspi_lock);
+    handle->hw->cmd.usr                 = 0;    // Stop ongoing transmissions
     handle->hw->dma_conf.dma_rx_stop    = 1;	// Stop SPI DMA
+    handle->hw->dma_conf.dma_tx_stop    = 1;	// Stop SPI DMA
 
     handle->hw->dma_in_link.stop        = 1;
     handle->hw->dma_out_link.stop       = 1;
-    
+
+    portEXIT_CRITICAL(&mspi_lock);
+
+
     //Reset SPI DMA
     handle->hw->dma_conf.val        		|= SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST;
     handle->hw->dma_out_link.start  		= 0;
@@ -795,6 +813,10 @@ esp_err_t IRAM_ATTR mspi_start_continuous_DMA_interrupt(mspi_transaction_t *mspi
 
     handle->transfer_cont_interrupt = 1;
     handle->hw->slave.trans_done = 0;      //Clear any pending interrupt
+
+    // uint32_t state = handle->hw->ext2.st;
+    // ESP_LOGI(TAG, "spi_state: %d", state);
+
     esp_intr_enable(handle->trans_intr);
 
     //Kick off continuous interrupt based transfers
@@ -818,10 +840,29 @@ esp_err_t IRAM_ATTR mspi_stop_continuous_DMA_interrupt(mspi_device_handle_t hand
         return ESP_OK;
     }
 
-    esp_intr_disable(handle->trans_intr);
+    level_io4 ^= 1;
+    gpio_set_level(GPIO_NUM_4, level_io4);
 
+    // uint32_t state = handle->hw->ext2.st;
+    // ESP_LOGI(TAG, "spi_state: %d", state);
+    //handle->transfer_cont_interrupt               = 0;
+    
+    handle->transfer_cont_interrupt_stop = 1;
+    while(handle->transfer_cont_interrupt_stop){
+    }
+    handle->transfer_cont_interrupt      = 0;
+
+    portENTER_CRITICAL(&mspi_lock);
+    handle->hw->cmd.usr                 = 0;    // Stop ongoing transmissions
+    //handle->hw->slave.sync_reset        = 1;  
+    //handle->hw->dma_conf.dma_rx_stop    = 1;	// Stop SPI DMA
+    //handle->hw->dma_conf.dma_tx_stop    = 1;	// Stop SPI DMA
+    
     handle->hw->dma_in_link.stop        = 1;
     handle->hw->dma_out_link.stop       = 1;
+
+    //esp_intr_disable(handle->trans_intr);   //Transfer done - disable interrupt
+    //handle->transfer_cont_interrupt      = 0;
     
     //Reset SPI DMA
     handle->hw->dma_conf.val        		|= SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST;
@@ -829,13 +870,16 @@ esp_err_t IRAM_ATTR mspi_stop_continuous_DMA_interrupt(mspi_device_handle_t hand
     handle->hw->dma_in_link.start   		= 0;
     handle->hw->dma_conf.val        		&= ~(SPI_OUT_RST|SPI_IN_RST|SPI_AHBM_RST|SPI_AHBM_FIFO_RST);
 
-    //reset buffer
-    memset(handle->dma_handle.dma_buffer, 0, handle->dma_handle.buffer_len);
-
     // Reset SPI DMA periph
     periph_module_reset( PERIPH_SPI_DMA_MODULE );
 
-    handle->transfer_cont_interrupt               = 0;
+    // Reset SPI periph
+    //periph_module_reset( PERIPH_HSPI_MODULE );
+
+    portEXIT_CRITICAL(&mspi_lock);
+
+    //reset buffer
+    memset(handle->dma_handle.dma_buffer, 0, handle->dma_handle.buffer_len);
 
     return ESP_OK;
 }
@@ -854,16 +898,30 @@ esp_err_t IRAM_ATTR mspi_device_transfer_blocking(mspi_transaction_t *mspi_trans
 
     s_mspi_set_transfer_phases(mspi_trans_p, handle);
 
-    handle->polling_done = 0;
     handle->polling_active = 1;
+    handle->polling_done = 0;
+
+    level_io4 ^= 1;
+    gpio_set_level(GPIO_NUM_4, level_io4);
 
     handle->hw->slave.trans_done = 0;       //Clear any pending interrupt
     esp_intr_enable(handle->trans_intr);    //Enable spi interrupt
+
     handle->hw->cmd.usr = 1;	            // SPI: Start new SPI transfer
 
     while(handle->polling_done != 1){
         //vTaskDelay(10 / portTICK_PERIOD_MS);
     }
+
+    //Temporary fix for bug with first read after DMA transfers. Do another poll.
+    // handle->polling_done = 0;
+    // handle->hw->slave.trans_done = 0;       //Clear any pending interrupt
+    // esp_intr_enable(handle->trans_intr);    //Enable spi interrupt
+    // handle->hw->cmd.usr = 1;
+    // while(handle->polling_done != 1){
+    //     //vTaskDelay(10 / portTICK_PERIOD_MS);
+    // }
+
 
     int byte_len = (mspi_trans_p->rx_len + 7)/8;      //How many bytes do we need for rx_len.
     uint8_t *spi_data = (uint8_t *)handle->hw->data_buf;
