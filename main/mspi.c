@@ -5,7 +5,7 @@
 #include "soc/spi_struct.h"
 #include <soc/dport_reg.h>
 #include "driver/periph_ctrl.h"
-
+#include "driver/spi_common_internal.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "mspi.h"
@@ -298,7 +298,7 @@ static esp_err_t s_mspi_configure_registers(spi_internal_t *spi)
 {
 
     //Claim peripheral
-    const bool spi_periph_claimed = spicommon_periph_claim(spi->host);
+    const bool spi_periph_claimed = spicommon_periph_claim(spi->host, "spi master");
     if(! spi_periph_claimed) {
         ESP_LOGE(TAG, "SPI periph not claimed. Already in use.");
         return ESP_FAIL;   
@@ -495,22 +495,24 @@ esp_err_t mspi_DMA_init(mspi_dma_config_t *mspi_dma_config, mspi_device_handle_t
         ESP_LOGI(TAG, "DMA channel = 0. No DMA will be used");
         return ESP_OK;
     }
+    uint32_t out_actual_tx_dma_chan;
+    uint32_t out_actual_rx_dma_chan;
+    spicommon_dma_chan_alloc(handle->host, mspi_dma_config->dmaChan, &out_actual_tx_dma_chan, &out_actual_rx_dma_chan);
 
+    // //Claim the DMA Peripheral
+    // const bool dma_chan_claimed = spicommon_dma_chan_claim(mspi_dma_config->dmaChan);
+    // if(! dma_chan_claimed) {
+    //     ESP_LOGE(TAG, "DMA periph not claimed. Already in use.");
+    //     return ESP_FAIL; 
+    // }
 
-    //Claim the DMA Peripheral
-    const bool dma_chan_claimed = spicommon_dma_chan_claim(mspi_dma_config->dmaChan);
-    if(! dma_chan_claimed) {
-        ESP_LOGE(TAG, "DMA periph not claimed. Already in use.");
-        return ESP_FAIL; 
-    }
-
-    //Select DMA channel
-    DPORT_SET_PERI_REG_BITS(
-          DPORT_SPI_DMA_CHAN_SEL_REG
-        , 3
-        , mspi_dma_config->dmaChan
-        , (handle->host* 2)
-    );
+    // //Select DMA channel
+    // DPORT_SET_PERI_REG_BITS(
+    //       DPORT_SPI_DMA_CHAN_SEL_REG
+    //     , 3
+    //     , mspi_dma_config->dmaChan
+    //     , (handle->host* 2)
+    // );
 
     handle->dma_handle.dmaChan = mspi_dma_config->dmaChan;
 

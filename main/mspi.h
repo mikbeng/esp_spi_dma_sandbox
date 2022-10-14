@@ -3,6 +3,7 @@
 
 #include <driver/spi_common.h>
 #include <driver/spi_master.h>
+#include <driver/gpio.h>
 //#include "my_config.h"
 //#include "esp_err.h"
 

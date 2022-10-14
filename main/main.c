@@ -18,7 +18,9 @@
 #include <driver/spi_master.h>
 #include "mspi.h"
 
-int64_t start_time, end_time;;
+
+
+volatile int64_t start_time, end_time;;
 
 uint16_t TLE5012B_get_cmd(uint8_t reg_address, uint8_t reg_num, bool safety_word){
     //prep command word
@@ -77,7 +79,7 @@ static void spi_task(void *arg)
     uint8_t rx_data[4] = {0};
     uint32_t rx_length = 0;
     uint16_t AVAL_reg, REVOL_reg;
-    float angle;
+    float angle = 0.0f;
     uint16_t revol;
 
     gpio_pad_select_gpio(GPIO_NUM_2);
@@ -132,12 +134,14 @@ static void spi_task(void *arg)
     { 
         vTaskDelay((10) / portTICK_PERIOD_MS);
 
-        
+        //start_time = esp_timer_get_time();
         mspi_get_dma_data_rx(&spi_trans_aval, mspi_handle);
         AVAL_reg = ((uint16_t)(spi_trans_aval.rxdata[0]) << 8) | ((uint16_t)spi_trans_aval.rxdata[1]);
         angle = TLE5012B_calc_angle_deg(AVAL_reg);
-
-        //ESP_LOGI(__func__, "angle: %.2f ", angle);
+        //end_time = esp_timer_get_time();
+        //ESP_LOGI(__func__, "delta-time: %lld", end_time-start_time);
+        ESP_LOGI(__func__, "angle: %.2f ", angle);
+        //ESP_LOGI(__func__, "AVAL_reg: %d ", AVAL_reg);
 
 
         loop_cnt++;
